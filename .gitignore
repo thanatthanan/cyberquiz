@@ -1,0 +1,17 @@
+# ค่าตั้งค่าจริง (มีรหัสผ่านฐานข้อมูล/ผู้ดูแล)
+config.php
+config copy.php
+config*.bak
+
+# คลังข้อสอบจริง — เก็บไว้เฉพาะในเครื่อง/โฮสต์ ไม่เผยแพร่
+inc/seed.php
+inc/bank2.php
+
+# ไฟล์ที่ผู้ดูแลอัปโหลด
+uploads/*
+!uploads/.htaccess
+!uploads/index.html
+
+*.zip
+.DS_Store
+Thumbs.db
