@@ -17,11 +17,14 @@ if (!cert_passed($a)) {
 // ต้องทำแบบประเมินการอบรมก่อน (ผู้ดูแลเปิดดูได้เสมอ)
 if (eval_required() && !is_admin() && !eval_done((int)$a['participant_id'])) redirect('eval.php?id=' . $id);
 
+$certCode = cert_code_for($pdo, $id);
+$verifyUrl = verify_url($certCode);
 $data = [
-    'cfg'  => cert_js_config(''),
-    'name' => $a['full_name'],
-    'date' => thai_date($a['submitted_at']),
-    'file' => 'เกียรติบัตร_' . preg_replace('/[\\\\\/:*?"<>|\s]+/u', '_', $a['full_name']) . '.pdf',
+    'cfg'   => cert_js_config(''),
+    'name'  => $a['full_name'],
+    'date'  => thai_date($a['submitted_at']),
+    'extra' => ['cert_code' => $certCode, 'verify_url' => $verifyUrl],
+    'file'  => 'เกียรติบัตร_' . preg_replace('/[\\\\\/:*?"<>|\s]+/u', '_', $a['full_name']) . '.pdf',
 ];
 
 page_header('เกียรติบัตร');
@@ -35,16 +38,18 @@ page_header('เกียรติบัตร');
   <canvas id="cert" aria-label="ตัวอย่างเกียรติบัตร" style="display:block;width:100%;max-width:900px;height:auto;margin:0 auto"></canvas>
   <p id="status" class="muted">กำลังสร้างเกียรติบัตร…</p>
   <button class="btn primary" id="dl" disabled>ดาวน์โหลดเกียรติบัตร (PDF)</button>
+  <p class="muted" style="margin-top:10px"><small>เลขที่เกียรติบัตร: <b><?= h($certCode) ?></b> · <a href="<?= h($verifyUrl) ?>" target="_blank">ลิงก์ตรวจสอบความถูกต้อง</a></small></p>
   <p><a href="result.php?id=<?= $id ?>">กลับหน้าผลคะแนน</a></p>
 </div>
 <script src="assets/vendor/jspdf.umd.min.js"></script>
+<script src="assets/vendor/qrcode.min.js"></script>
 <script src="assets/cert.js?v=<?= @filemtime(__DIR__ . '/assets/cert.js') ?>"></script>
 <script>
 (function(){
   var D = <?= json_encode($data, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
   var cv = document.getElementById('cert'), btn = document.getElementById('dl'), st = document.getElementById('status');
   CQCert.prepare(D.cfg).then(function(img){
-    CQCert.draw(cv, img, D.cfg, D.name, D.date);
+    CQCert.draw(cv, img, D.cfg, D.name, D.date, null, D.extra);
     st.textContent = ''; btn.disabled = false;
     btn.onclick = function(){ CQCert.savePdf(cv, D.file); };
   }).catch(function(e){ st.textContent = e.message; });

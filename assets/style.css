@@ -18,7 +18,7 @@ main.wrap{padding-top:20px;padding-bottom:24px}
 .top .wrap{padding-top:12px;padding-bottom:12px}
 .brand{display:flex;align-items:center;gap:12px}
 .brand .logo{height:52px;width:auto;flex:none}
-.brand > span{border-left:1px solid var(--line);padding-left:12px}
+.brand > span{border-left:1px solid var(--line);padding-left:12px;min-width:0;flex:1}
 .brand b{display:block;font-size:18px}
 .brand small{display:block;color:var(--muted);font-size:13px;line-height:1.3}
 main.wrap{margin-top:4px}
@@ -27,7 +27,7 @@ main.wrap{margin-top:4px}
 .linkrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:8px}
 .linkrow > div{border:1px solid var(--line);border-radius:12px;padding:10px 14px}
 .linkrow .url{font-size:18px}
-@media (max-width:600px){.brand .logo{height:40px}.brand small{display:none}}
+@media (max-width:600px){.brand{gap:10px}.brand .logo{height:40px}.brand > span{padding-left:10px}.brand b{font-size:15px;line-height:1.25}.brand small{display:block !important;font-size:12.5px;line-height:1.35;margin-top:2px;word-break:break-word}}
 .foot{color:var(--muted);font-size:12px;text-align:center;padding:16px}
 h1{font-size:26px;margin:0 0 6px;color:var(--navy)}
 h2.section{font-size:20px;color:var(--navy);margin:28px 0 10px}
@@ -73,8 +73,12 @@ fieldset.card{min-width:0}
 .opt:hover{border-color:#b8c9ea}
 .opt:has(input:checked){border-color:var(--navy2);background:#f1f5fd}
 .opt input{margin-top:6px}
+.opt span{pointer-events:none}
 .let{flex:none;font-weight:700;color:var(--navy);min-width:20px}
 .submitbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;bottom:8px;border-top:4px solid var(--red)}
+.quizprogress{position:sticky;top:8px;z-index:20;padding:10px 16px;box-shadow:0 4px 12px rgba(16,24,40,.08)}
+.quizprogress .qp-row{display:flex;justify-content:space-between;align-items:center;font-weight:600;color:var(--navy)}
+.quizprogress .progress{margin:6px 0 2px}
 .progress{height:10px;background:#e7ebf2;border-radius:99px;overflow:hidden;margin:10px 0 4px}
 .progress div{height:100%;width:0;background:linear-gradient(90deg,var(--navy2),var(--red));transition:width .25s}
 .progress.big{height:14px;max-width:420px;margin:12px auto}
@@ -140,6 +144,7 @@ fieldset.card{min-width:0}
 @media (max-width:600px){
   body{font-size:16px}
   .score{font-size:52px}
+  .submitbar{position:static}
   .edit .row{flex-direction:column;gap:0}
   .edit .seq{width:100%}
 }

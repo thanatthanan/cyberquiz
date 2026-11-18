@@ -17,25 +17,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $upd = $pdo->prepare("UPDATE questions SET seq=?, topic=?, question=?, opt_a=?, opt_b=?, opt_c=?, opt_d=?, correct=? WHERE id=? AND test_id=?");
     $ins = $pdo->prepare("INSERT INTO questions (test_id,seq,topic,question,opt_a,opt_b,opt_c,opt_d,correct) VALUES (?,?,?,?,?,?,?,?,?)");
     $del = $pdo->prepare("DELETE FROM questions WHERE id=? AND test_id=?");
+    $deleted = 0;
+    $added = 0;
     foreach ((array)($_POST['q'] ?? []) as $id => $q) {
         $vals = [(int)($q['seq'] ?? 0), trim((string)($q['topic'] ?? '')), trim((string)($q['question'] ?? '')),
                  trim((string)($q['a'] ?? '')), trim((string)($q['b'] ?? '')), trim((string)($q['c'] ?? '')), trim((string)($q['d'] ?? '')),
                  max(0, min(3, (int)($q['correct'] ?? 0)))];
         if ($id === 'new') {
-            if ($vals[2] !== '') $ins->execute(array_merge([$tid], $vals));
+            if ($vals[2] !== '') { $ins->execute(array_merge([$tid], $vals)); $added++; }
         } elseif (!empty($q['delete'])) {
             $del->execute([(int)$id, $tid]);
+            $deleted += $del->rowCount();
         } else {
             $upd->execute(array_merge($vals, [(int)$id, $tid]));
         }
     }
+    // จัดเรียงลำดับข้อ (seq) ใหม่เป็น 1, 2, 3, ... อัตโนมัติเมื่อมีการลบหรือแทรกข้อ
+    $rows = $pdo->prepare("SELECT id FROM questions WHERE test_id=? ORDER BY seq, id");
+    $rows->execute([$tid]);
+    $reseq = $pdo->prepare("UPDATE questions SET seq=? WHERE id=?");
+    $remain = 0;
+    foreach ($rows->fetchAll(PDO::FETCH_COLUMN) as $qid) {
+        $remain++;
+        $reseq->execute([$remain, (int)$qid]);
+    }
     $pdo->commit();
-    $_SESSION['flash'] = 'บันทึกข้อสอบแล้ว';
+    $parts = [];
+    if ($deleted > 0) $parts[] = "ลบออก {$deleted} ข้อ";
+    if ($added > 0)   $parts[] = "เพิ่มใหม่ {$added} ข้อ";
+    $parts[] = "คงเหลือ {$remain} ข้อ";
+    $_SESSION['flash'] = 'บันทึกข้อสอบแล้ว (' . implode(' · ', $parts) . ')';
     redirect('questions.php?test=' . urlencode($test['code']));
 }
 
 $flash = $_SESSION['flash'] ?? '';
 unset($_SESSION['flash']);
+$counts = $pdo->query("SELECT test_id, COUNT(*) FROM questions GROUP BY test_id")->fetchAll(PDO::FETCH_KEY_PAIR);
 $qs = questions($tid);
 $s = $pdo->prepare("SELECT COUNT(*) FROM attempts WHERE test_id=?");
 $s->execute([$tid]);
@@ -64,7 +81,16 @@ page_header('จัดการข้อสอบ', admin_nav('quiz'));
   <h1>จัดการข้อสอบ</h1>
 </div>
 <div class="tabs">
-  <?php foreach ($tests as $t): ?><a class="<?= $t['code'] === $test['code'] ? 'on' : '' ?>" href="?test=<?= h($t['code']) ?>"><?= h($t['title']) ?></a><?php endforeach; ?>
+  <?php foreach ($tests as $t): $c = (int)($counts[$t['id']] ?? 0); ?>
+    <a class="<?= $t['code'] === $test['code'] ? 'on' : '' ?>" href="?test=<?= h($t['code']) ?>"><?= h($t['title']) ?> <span class="tabcount"><?= $c ?></span></a>
+  <?php endforeach; ?>
+</div>
+<div class="card" style="padding:12px 16px;margin-bottom:12px">
+  จำนวนข้อสอบในคลังปัจจุบัน:
+  <?php $sumAll = 0; foreach ($tests as $idx => $t): $c = (int)($counts[$t['id']] ?? 0); $sumAll += $c; ?>
+    <?= $idx > 0 ? ' · ' : '' ?><?= h($t['title']) ?> <b><?= $c ?></b> ข้อ
+  <?php endforeach; ?>
+  (รวมทั้งหมด <b><?= $sumAll ?></b> ข้อ)
 </div>
 <?php if ($flash): ?><div class="alert info"><?= h($flash) ?></div><?php endif; ?>
 <?php if ($nAttempts): ?><div class="alert">มีผู้ส่งคำตอบชุดนี้แล้ว <?= $nAttempts ?> คน การแก้คำตอบที่ถูกจะไม่คำนวณคะแนนเดิมใหม่ และการลบข้อจะลบคำตอบของข้อนั้นไปด้วย</div><?php endif; ?>

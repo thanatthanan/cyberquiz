@@ -35,6 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     };
     set_setting('cert_enabled', !empty($_POST['cert_enabled']) ? '1' : '0');
     set_setting('eval_required', !empty($_POST['eval_required']) ? '1' : '0');
+    set_setting('cert_show_course', !empty($_POST['cert_show_course']) ? '1' : '0');
     set_setting('cert_pass_pct', $num('cert_pass_pct', 0, 100));
     foreach (['name', 'date'] as $f) {
         set_setting("cert_{$f}_x", $num("cert_{$f}_x", 0, 100));
@@ -99,6 +100,7 @@ page_header('ตั้งค่าเกียรติบัตร', admin_nav(
     <fieldset><legend>เงื่อนไข</legend>
       <label><input type="checkbox" name="cert_enabled" value="1" <?= $s['cert_enabled'] === '1' ? 'checked' : '' ?>> เปิดให้ดาวน์โหลดเกียรติบัตร</label>
       <label><input type="checkbox" name="eval_required" value="1" <?= eval_required() ? 'checked' : '' ?>> ต้องทำแบบประเมินการอบรมก่อนดาวน์โหลด</label>
+      <label><input type="checkbox" name="cert_show_course" value="1" <?= $s['cert_show_course'] === '1' ? 'checked' : '' ?>> แสดงชื่อหัวข้อการอบรมและหน่วยงานผู้จัดอัตโนมัติ (ดึงจากหน้าตั้งค่า)</label>
       <label>เกณฑ์ผ่าน: คะแนนแบบทดสอบหลังเรียนอย่างน้อย (%)
         <input type="number" name="cert_pass_pct" min="0" max="100" step="1" value="<?= h($s['cert_pass_pct']) ?>"></label>
       <small class="muted">เช่น 60% ของ 10 ข้อ = ต้องได้ 6 คะแนนขึ้นไป · ใช้วันที่ส่ง Posttest เป็นวันที่บนเกียรติบัตร</small>
@@ -138,10 +140,12 @@ page_header('ตั้งค่าเกียรติบัตร', admin_nav(
 </div>
 
 <script src="../assets/vendor/jspdf.umd.min.js"></script>
+<script src="../assets/vendor/qrcode.min.js"></script>
 <script src="../assets/cert.js?v=<?= @filemtime(__DIR__ . '/../assets/cert.js') ?>"></script>
 <script>
 (function(){
   var cfg = <?= json_encode($js, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+  var sampleExtra = { cert_code: 'CQ-69-SAMPLE', verify_url: <?= json_encode(verify_url('CQ-69-SAMPLE'), JSON_UNESCAPED_UNICODE) ?> };
   var today = <?= json_encode(thai_date(date('Y-m-d')), JSON_UNESCAPED_UNICODE) ?>;
   var f = document.getElementById('f'), cv = document.getElementById('cert'), st = document.getElementById('status');
   var img = null;
@@ -155,7 +159,7 @@ page_header('ตั้งค่าเกียรติบัตร', admin_nav(
     c.date_prefix = val('cert_date_prefix');
     return c;
   }
-  function redraw(){ if (img) CQCert.draw(cv, img, current(), document.getElementById('sample').value, today); }
+  function redraw(){ if (img) CQCert.draw(cv, img, current(), document.getElementById('sample').value, today, null, sampleExtra); }
   function load(src){
     st.textContent = 'กำลังโหลดภาพ…';
     CQCert.prepare(Object.assign({}, cfg, {bg: src})).then(function(i){ img = i; st.textContent = 'ขนาดภาพ ' + i.naturalWidth + ' × ' + i.naturalHeight + ' px'; redraw(); })

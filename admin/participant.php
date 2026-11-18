@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $pdo->prepare("UPDATE participants SET full_name=?, agency=?, name_key=? WHERE id=?")
                 ->execute([$name, mb_substr($agency, 0, 200), $key, $id]);
-            $_SESSION['flash'] = 'แก้ไขชื่อเป็น “' . $name . '” แล้ว — เกียรติบัตรจะใช้ชื่อใหม่ทันที';
+            $_SESSION['flash'] = 'แก้ไขข้อมูลของ “' . $name . '” แล้ว — เกียรติบัตรจะใช้ชื่อใหม่ทันที';
             redirect($back);
         }
     }
@@ -53,7 +53,7 @@ page_header('แก้ไขข้อมูลผู้เข้าร่วม'
 <form method="post" class="card form" style="max-width:640px">
   <?= csrf_field() ?>
   <input type="hidden" name="id" value="<?= $id ?>"><input type="hidden" name="back" value="<?= h($back) ?>">
-  <p class="muted" style="margin-top:0">ชื่อเดิมที่ผู้เข้าร่วมกรอก: <b><?= h($p['full_name']) ?></b></p>
+  <p class="muted" style="margin-top:0">ชื่อเดิมที่ผู้เข้าร่วมกรอก: <b><?= h($p['full_name']) ?></b><?php if (!empty($p['ref_code'])): ?> · รหัสประจำตัว: <b><?= h($p['ref_code']) ?></b><?php endif; ?></p>
   <label>ชื่อ-สกุล (แสดงบนเกียรติบัตร)
     <input name="full_name" required maxlength="200" value="<?= h($_POST['full_name'] ?? $p['full_name']) ?>" autofocus></label>
   <label>หน่วยงาน

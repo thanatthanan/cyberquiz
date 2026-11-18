@@ -53,21 +53,50 @@ function name_key(string $name): string
     $s = preg_replace('/\s+/u', '', $name);
     return mb_strtolower((string)$s, 'UTF-8');
 }
+function is_line_browser(): bool
+{
+    return stripos((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 'Line/') !== false;
+}
+function generate_ref_code(PDO $pdo): string
+{
+    $chk = $pdo->prepare("SELECT 1 FROM participants WHERE ref_code=?");
+    for ($i = 0; $i < 20; $i++) {
+        $code = (string)random_int(100000, 999999);
+        $chk->execute([$code]);
+        if (!$chk->fetchColumn()) return $code;
+    }
+    return strtoupper(bin2hex(random_bytes(3)));
+}
 function fatal(string $msg): void
 {
+    $GLOBALS['CQ_NO_DB_HEADER'] = true;
     page_header('เกิดข้อผิดพลาด');
     echo '<div class="card"><h2>เกิดข้อผิดพลาด</h2><p>' . $msg . '</p></div>';
     page_footer();
     exit;
 }
 
+function course_title(): string
+{
+    if (!empty($GLOBALS['CQ_NO_DB_HEADER'])) return (string)cfg('course_title');
+    $v = trim((string)setting('course_title', ''));
+    return $v !== '' ? $v : (string)cfg('course_title');
+}
+function org_name(): string
+{
+    if (!empty($GLOBALS['CQ_NO_DB_HEADER'])) return (string)cfg('org_name');
+    $v = setting('org_name', null);
+    return ($v !== null && trim((string)$v) !== '') ? (string)$v : (string)cfg('org_name');
+}
+
 /* ---------- layout ---------- */
 function page_header(string $title, string $nav = ''): void
 {
     $root = $GLOBALS['PAGE_ROOT'] ?? '';
-    $course = h(cfg('course_title'));
+    $course = h(course_title());
     echo '<!doctype html><html lang="th"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        . '<meta name="format-detection" content="telephone=no, date=no, address=no, email=no">'
         . '<title>' . h($title) . ' · ' . $course . '</title>'
         . '<link rel="icon" href="' . $root . 'assets/favicon.ico" sizes="any">'
         . '<link rel="icon" type="image/png" sizes="32x32" href="' . $root . 'assets/favicon-32x32.png">'
@@ -75,9 +104,13 @@ function page_header(string $title, string $nav = ''): void
         . '<link rel="apple-touch-icon" href="' . $root . 'assets/apple-touch-icon.png">'
         . '<link rel="stylesheet" href="' . $root . 'assets/style.css?v=' . @filemtime(__DIR__ . '/../assets/style.css') . '"></head><body>'
         . '<header class="top"><div class="wrap"><div class="brand"><img class="logo" src="' . $root . 'assets/logo.png" alt="สกมช. NCSA">'
-        . '<span><b>' . $course . '</b><small>' . h(cfg('org_name')) . '</small></span></div></div></header>'
+        . '<span><b>' . $course . '</b><small>' . h(org_name()) . '</small></span></div></div></header>'
         . $nav
         . '<main class="wrap">';
+    if ($root === '' && is_line_browser()) {
+        echo '<div class="alert info">คุณกำลังเปิดผ่านแอป LINE — หากต้องการให้ระบบจำชื่ออัตโนมัติและดาวน์โหลดเกียรติบัตรได้สะดวก '
+           . 'แนะนำให้กดเมนู <b>⋮</b> แล้วเลือก <b>เปิดในเบราว์เซอร์เริ่มต้น (Safari / Chrome)</b></div>';
+    }
 }
 function page_footer(): void
 {
@@ -117,8 +150,12 @@ function db(): PDO
 /* นำเข้าข้อสอบชุดเพิ่มเติมครั้งเดียว (ไม่ซ้ำข้อเดิม ตรวจจากข้อความคำถาม) */
 function migrate(PDO $pdo): void
 {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) PRIMARY KEY, v VARCHAR(200) NOT NULL)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) PRIMARY KEY, v TEXT NOT NULL)
                 ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    $svCol = $pdo->query("SHOW COLUMNS FROM settings LIKE 'v'")->fetch();
+    if ($svCol && stripos((string)$svCol['Type'], 'varchar(200)') !== false) {
+        $pdo->exec("ALTER TABLE settings MODIFY COLUMN v TEXT NOT NULL");
+    }
     $pdo->exec("CREATE TABLE IF NOT EXISTS evaluations (
         id INT AUTO_INCREMENT PRIMARY KEY,
         participant_id INT NOT NULL UNIQUE,
@@ -130,10 +167,43 @@ function migrate(PDO $pdo): void
         created_at DATETIME NOT NULL,
         FOREIGN KEY (participant_id) REFERENCES participants(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-    $done = $pdo->query("SELECT v FROM settings WHERE k='bank2_imported'")->fetchColumn();
-    if ($done) return;
+    import_question_bank($pdo, 'bank2_imported', 'bank2.php');
+    import_question_bank($pdo, 'bank3_ldd_imported', 'bank3_ldd.php');
+    sync_question_bank_exact($pdo, 'bank3_ldd_40_v2_synced', 'bank3_ldd.php');
+
+    // เพิ่มคอลัมน์ ref_code สำหรับยืนยันตัวตนข้ามเครื่อง / LINE Browser
+    $cols = $pdo->query("SHOW COLUMNS FROM participants")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('ref_code', $cols, true)) {
+        $pdo->exec("ALTER TABLE participants ADD COLUMN ref_code VARCHAR(16) NULL AFTER name_key, ADD UNIQUE KEY uq_ref_code (ref_code)");
+    }
+    $missing = $pdo->query("SELECT id FROM participants WHERE ref_code IS NULL")->fetchAll(PDO::FETCH_COLUMN);
+    if ($missing) {
+        $upd = $pdo->prepare("UPDATE participants SET ref_code=? WHERE id=?");
+        foreach ($missing as $pid) {
+            $upd->execute([generate_ref_code($pdo), (int)$pid]);
+        }
+    }
+
+    // เพิ่มคอลัมน์ attempt_no และ first_score ใน attempts สำหรับรองรับการสอบซ่อม Posttest
+    $acols = $pdo->query("SHOW COLUMNS FROM attempts")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('attempt_no', $acols, true)) {
+        $pdo->exec("ALTER TABLE attempts ADD COLUMN attempt_no INT NOT NULL DEFAULT 1 AFTER total");
+    }
+    if (!in_array('first_score', $acols, true)) {
+        $pdo->exec("ALTER TABLE attempts ADD COLUMN first_score INT NULL AFTER attempt_no");
+    }
+    if (!in_array('cert_code', $acols, true)) {
+        $pdo->exec("ALTER TABLE attempts ADD COLUMN cert_code VARCHAR(24) NULL AFTER first_score, ADD UNIQUE KEY uq_cert_code (cert_code)");
+    }
+}
+
+function import_question_bank(PDO $pdo, string $settingKey, string $filename): void
+{
+    $done = $pdo->prepare("SELECT v FROM settings WHERE k=?");
+    $done->execute([$settingKey]);
+    if ($done->fetchColumn()) return;
     // คลังข้อสอบจริงไม่อยู่ใน git — ถ้าไม่มีไฟล์ ให้ข้าม (ไม่ตั้ง flag เพื่อให้นำเข้าได้เมื่อวางไฟล์ภายหลัง)
-    $bankFile = __DIR__ . '/bank2.php';
+    $bankFile = __DIR__ . '/' . $filename;
     if (!is_file($bankFile)) return;
     $bank = require $bankFile;
     $pdo->beginTransaction();
@@ -154,7 +224,35 @@ function migrate(PDO $pdo): void
             $insQ->execute([$tid, ++$seq, $q['topic'], $q['question'], $o[0], $o[1], $o[2], $o[3], $q['correct']]);
         }
     }
-    $pdo->prepare("INSERT INTO settings (k,v) VALUES ('bank2_imported', ?)")->execute([date('Y-m-d H:i:s')]);
+    $pdo->prepare("INSERT INTO settings (k,v) VALUES (?, ?)")->execute([$settingKey, date('Y-m-d H:i:s')]);
+    $pdo->commit();
+}
+function sync_question_bank_exact(PDO $pdo, string $settingKey, string $filename): void
+{
+    $done = $pdo->prepare("SELECT v FROM settings WHERE k=?");
+    $done->execute([$settingKey]);
+    if ($done->fetchColumn()) return;
+    $bankFile = __DIR__ . '/' . $filename;
+    if (!is_file($bankFile)) return;
+    $bank = require $bankFile;
+    if (!is_array($bank)) return;
+    $pdo->beginTransaction();
+    $delQ = $pdo->prepare("DELETE FROM questions WHERE test_id=?");
+    $insQ = $pdo->prepare("INSERT INTO questions (test_id,seq,topic,question,opt_a,opt_b,opt_c,opt_d,correct) VALUES (?,?,?,?,?,?,?,?,?)");
+    foreach ($bank as $code => $list) {
+        $s = $pdo->prepare("SELECT id FROM tests WHERE code=?");
+        $s->execute([$code]);
+        $tid = (int)$s->fetchColumn();
+        if (!$tid) continue;
+        $delQ->execute([$tid]);
+        $seq = 0;
+        foreach ($list as $q) {
+            $seq++;
+            $o = $q['options'];
+            $insQ->execute([$tid, $seq, $q['topic'], $q['question'], $o[0], $o[1], $o[2], $o[3], (int)$q['correct']]);
+        }
+    }
+    $pdo->prepare("INSERT INTO settings (k,v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v=VALUES(v)")->execute([$settingKey, date('Y-m-d H:i:s')]);
     $pdo->commit();
 }
 
@@ -300,7 +398,7 @@ function thai_date(string $datetime): string
 function cert_defaults(): array
 {
     return [
-        'cert_enabled' => '1', 'cert_pass_pct' => '60', 'cert_bg' => '',
+        'cert_enabled' => '1', 'cert_pass_pct' => '60', 'cert_bg' => '', 'cert_show_course' => '1',
         'cert_name_x' => '50', 'cert_name_y' => '57.7', 'cert_name_size' => '6', 'cert_name_color' => '#1f3864',
         'cert_date_x' => '50', 'cert_date_y' => '76.5', 'cert_date_size' => '2.6', 'cert_date_color' => '#1f3864',
         'cert_date_prefix' => 'ให้ไว้ ณ วันที่ ',
@@ -322,6 +420,10 @@ function cert_js_config(string $root = ''): array
         'name_x' => (float)$s['cert_name_x'], 'name_y' => (float)$s['cert_name_y'], 'name_size' => (float)$s['cert_name_size'], 'name_color' => $s['cert_name_color'],
         'date_x' => (float)$s['cert_date_x'], 'date_y' => (float)$s['cert_date_y'], 'date_size' => (float)$s['cert_date_size'], 'date_color' => $s['cert_date_color'],
         'date_prefix' => $s['cert_date_prefix'],
+        'course_title' => $s['cert_show_course'] === '1' ? course_title() : '',
+        'course_x' => 50.0, 'course_y' => 70.1, 'course_size' => 3.5, 'course_color' => '#1f3864',
+        'org_name' => $s['cert_show_course'] === '1' ? org_name() : '',
+        'org_x' => 50.0, 'org_y' => 83.5, 'org_size' => 2.9, 'org_color' => '#1f3864',
     ];
 }
 /** ผ่านเกณฑ์รับเกียรติบัตรหรือไม่ (ใช้ผล Posttest) */
@@ -334,6 +436,54 @@ function cert_passed(array $attempt): bool
 function cert_min_score(int $total): int
 {
     return (int)ceil($total * (float)setting('cert_pass_pct', '60') / 100 - 1e-9);
+}
+function base_url(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') ? 'https' : 'http';
+    $host = (string)($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $dir = rtrim(str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/'))), '/');
+    if (($GLOBALS['PAGE_ROOT'] ?? '') === '../') {
+        $dir = preg_replace('#/[^/]+$#', '', $dir);
+    }
+    return $scheme . '://' . $host . $dir . '/';
+}
+function verify_url(string $code): string
+{
+    return base_url() . 'verify.php?c=' . rawurlencode($code);
+}
+function cert_code_for(PDO $pdo, int $attemptId): string
+{
+    $s = $pdo->prepare("SELECT cert_code, submitted_at FROM attempts WHERE id=?");
+    $s->execute([$attemptId]);
+    $r = $s->fetch();
+    if (!$r) return '';
+    if (!empty($r['cert_code'])) return (string)$r['cert_code'];
+    $yr = substr((string)((int)date('Y', strtotime((string)$r['submitted_at'])) + 543), -2);
+    $upd = $pdo->prepare("UPDATE attempts SET cert_code=? WHERE id=? AND cert_code IS NULL");
+    for ($i = 0; $i < 10; $i++) {
+        $code = 'CQ-' . $yr . '-' . strtoupper(bin2hex(random_bytes(3)));
+        try {
+            $upd->execute([$code, $attemptId]);
+            return $code;
+        } catch (PDOException $e) {
+            // ชนรหัสเดิม สุ่มใหม่
+        }
+    }
+    return 'CQ-' . $yr . '-' . str_pad((string)$attemptId, 6, '0', STR_PAD_LEFT);
+}
+function post_max_attempts(): int
+{
+    return max(0, (int)setting('post_max_attempts', '3'));
+}
+function can_retake_post(array $attempt): bool
+{
+    if (($attempt['code'] ?? '') !== 'post') return false;
+    if (setting('cert_enabled', '1') !== '1') return false;
+    if (cert_passed($attempt)) return false;
+    $max = post_max_attempts();
+    if ($max === 1) return false;
+    if ($max === 0) return true;
+    return (int)($attempt['attempt_no'] ?? 1) < $max;
 }
 
 /* ---------- แบบประเมินการอบรม ---------- */
@@ -365,7 +515,7 @@ function cert_modal_assets(bool $withLibs = true): string
 {
     $v = fn($f) => @filemtime(__DIR__ . '/../assets/' . $f);
     $out = '';
-    if ($withLibs) $out .= '<script src="../assets/vendor/jspdf.umd.min.js"></script><script src="../assets/cert.js?v=' . $v('cert.js') . '"></script>';
+    if ($withLibs) $out .= '<script src="../assets/vendor/jspdf.umd.min.js"></script><script src="../assets/vendor/qrcode.min.js"></script><script src="../assets/cert.js?v=' . $v('cert.js') . '"></script>';
     return $out . '<script>window.CQ_CERT_CFG=' . json_encode(cert_js_config('../'), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';</script>'
         . '<script src="../assets/cert_modal.js?v=' . $v('cert_modal.js') . '"></script>';
 }

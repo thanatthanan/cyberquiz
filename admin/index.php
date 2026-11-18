@@ -33,6 +33,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("DELETE FROM participants WHERE id=?")->execute([(int)($_POST['pid'] ?? 0)]);
             $_SESSION['flash'] = 'ลบผู้เข้าร่วมแล้ว';
             break;
+        case 'save_course':
+            $cTitle = trim((string)($_POST['course_title'] ?? ''));
+            $cOrg   = trim((string)($_POST['org_name'] ?? ''));
+            $maxAtt = max(0, (int)($_POST['post_max_attempts'] ?? 3));
+            if ($cTitle === '') {
+                $_SESSION['flash'] = 'กรุณากรอกชื่อหัวข้อการอบรม';
+            } else {
+                set_setting('course_title', mb_substr($cTitle, 0, 500));
+                set_setting('org_name', mb_substr($cOrg, 0, 500));
+                set_setting('post_max_attempts', (string)$maxAtt);
+                $_SESSION['flash'] = 'บันทึกการตั้งค่าการอบรมแล้ว';
+            }
+            break;
         case 'reset':
             if (trim((string)($_POST['confirm'] ?? '')) === 'RESET') {
                 $pdo->exec("DELETE FROM participants");
@@ -93,7 +106,7 @@ foreach ($tests as $t) {
     $dist[$t['id']] = $s->fetchAll(PDO::FETCH_KEY_PAIR);
 }
 
-$people = $pdo->prepare("SELECT p.id, p.full_name, p.agency, p.created_at,
+$people = $pdo->prepare("SELECT p.id, p.full_name, p.agency, p.ref_code, p.created_at,
     b.score pre_s, b.total pre_t, b.submitted_at pre_at, c.id post_id, c.score post_s, c.total post_t, c.submitted_at post_at
     FROM participants p
     LEFT JOIN attempts b ON b.participant_id=p.id AND b.test_id=?
@@ -193,10 +206,11 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   <small class="muted">ลิงก์สำหรับผู้เข้าร่วม (เครื่องที่ต่อเครือข่ายเดียวกัน) · ถ้าเครื่องอื่นเปิดไม่ได้ ให้อนุญาต Apache ใน Windows Firewall</small>
   <div class="linkrow">
     <div><span class="badge pre">ก่อนเรียน</span> <?= !empty($byCode['pre']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
-      <div class="url"><?= h($lanUrl . 'pretest.php') ?></div></div>
+      <div class="url"><?= h($lanUrl . 'pretest.php?openExternalBrowser=1') ?></div>
+      <small class="muted">ใช้ลิงก์นี้สร้าง QR Code (สแกนผ่าน LINE จะเปิด Chrome/Safari ให้อัตโนมัติ)</small></div>
     <div><span class="badge post">หลังเรียน</span> <?= !empty($byCode['post']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
-      <div class="url"><?= h($lanUrl . 'posttest.php') ?></div>
-      <small class="muted"><?= (cfg('require_pretest') ?? true) ? 'ต้องทำ Pretest ด้วยชื่อเดียวกันก่อนจึงจะทำได้' : 'ไม่บังคับทำ Pretest ก่อน (ตั้งค่าใน config.php)' ?></small></div>
+      <div class="url"><?= h($lanUrl . 'posttest.php?openExternalBrowser=1') ?></div>
+      <small class="muted"><?= (cfg('require_pretest') ?? true) ? 'เครื่องเดิมกดเริ่มสอบได้เลย / ย้ายเครื่องค้นหาด้วยชื่อหรือรหัส 6 หลัก' : 'ไม่บังคับทำ Pretest ก่อน (ตั้งค่าใน config.php)' ?></small></div>
   </div>
 </div>
 
@@ -265,6 +279,28 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   </div>
 <?php endforeach; ?>
 </div>
+
+<h2 class="section">ตั้งค่าหัวข้อการอบรม</h2>
+<form method="post" class="card form">
+  <?= csrf_field() ?><input type="hidden" name="action" value="save_course">
+  <label>ชื่อหัวข้อการอบรม (แสดงบนแถบหัวเว็บทุกหน้า)
+    <input name="course_title" required maxlength="500" value="<?= h(course_title()) ?>" placeholder="เช่น การอบรมความตระหนักรู้ด้านความมั่นคงปลอดภัยไซเบอร์">
+  </label>
+  <label>ชื่อหน่วยงาน / ผู้จัด
+    <input name="org_name" maxlength="500" value="<?= h(org_name()) ?>" placeholder="เช่น สำนักงานคณะกรรมการการรักษาความมั่นคงปลอดภัยไซเบอร์แห่งชาติ (สกมช.)">
+  </label>
+  <label>จำนวนครั้งสูงสุดที่ทำแบบทดสอบหลังเรียนได้ (กรณีไม่ผ่านเกณฑ์)
+    <?php $curMax = post_max_attempts(); ?>
+    <select name="post_max_attempts">
+      <option value="1" <?= $curMax === 1 ? 'selected' : '' ?>>1 รอบ (ทำได้ครั้งเดียว ไม่ให้สอบซ่อม)</option>
+      <option value="2" <?= $curMax === 2 ? 'selected' : '' ?>>2 รอบ (สอบซ่อมได้ 1 ครั้ง)</option>
+      <option value="3" <?= $curMax === 3 ? 'selected' : '' ?>>3 รอบ (สอบซ่อมได้ 2 ครั้ง — แนะนำ)</option>
+      <option value="5" <?= $curMax === 5 ? 'selected' : '' ?>>5 รอบ (สอบซ่อมได้ 4 ครั้ง)</option>
+      <option value="0" <?= $curMax === 0 ? 'selected' : '' ?>>ไม่จำกัดรอบ (ทำซ้ำได้จนกว่าจะผ่านเกณฑ์)</option>
+    </select>
+  </label>
+  <button class="btn primary">บันทึกการตั้งค่า</button>
+</form>
 
 <h2 class="section">ล้างข้อมูลเพื่อเริ่มรุ่นใหม่</h2>
 <form method="post" class="card form danger">
@@ -353,16 +389,17 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
 <section class="tabpane" data-pane="people" <?= $tab === 'people' ? '' : 'hidden' ?>>
 <h2 class="section">ผู้เข้าร่วม</h2>
 <div class="card">
-  <input class="search" id="search" placeholder="ค้นหาชื่อหรือหน่วยงาน…">
+  <input class="search" id="search" placeholder="ค้นหาชื่อ, หน่วยงาน หรือรหัส 6 หลัก…">
   <div class="scroll">
   <table class="tbl" id="people">
-    <thead><tr><th>#</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>ก่อนเรียน</th><th>หลังเรียน</th><th>เปลี่ยนแปลง</th><th>เกียรติบัตร</th><th>ส่งล่าสุด</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>รหัส</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>ก่อนเรียน</th><th>หลังเรียน</th><th>เปลี่ยนแปลง</th><th>เกียรติบัตร</th><th>ส่งล่าสุด</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($people as $i => $p):
         $d = ($p['pre_s'] !== null && $p['post_s'] !== null) ? (int)$p['post_s'] - (int)$p['pre_s'] : null;
         $last = max((string)$p['pre_at'], (string)$p['post_at']); ?>
       <tr>
         <td><?= count($people) - $i ?></td>
+        <td><code><?= h($p['ref_code'] ?: '–') ?></code></td>
         <td><?= h($p['full_name']) ?> <a class="editlink" href="participant.php?id=<?= (int)$p['id'] ?>&amp;back=<?= rawurlencode('index.php?tab=people') ?>" title="แก้ไขชื่อ">แก้ไข</a></td>
         <td><?= h($p['agency']) ?></td>
         <td><?= $p['pre_s'] !== null ? (int)$p['pre_s'] . '/' . (int)$p['pre_t'] : '<span class="muted">–</span>' ?></td>
@@ -374,7 +411,7 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
             <input type="hidden" name="action" value="delete_participant"><input type="hidden" name="pid" value="<?= (int)$p['id'] ?>">
             <label class="tiny"><input type="checkbox" name="confirm_del"> ลบ</label><button class="btn tiny ghost">ยืนยัน</button></form></td>
       </tr>
-    <?php endforeach; if (!$people): ?><tr><td colspan="9" class="muted">ยังไม่มีผู้เข้าร่วม</td></tr><?php endif; ?>
+    <?php endforeach; if (!$people): ?><tr><td colspan="10" class="muted">ยังไม่มีผู้เข้าร่วม</td></tr><?php endif; ?>
     </tbody>
   </table>
   </div>

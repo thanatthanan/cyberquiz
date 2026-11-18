@@ -39,7 +39,17 @@ $backUrl = 'cert_export.php?' . ($q !== '' ? 'q=' . rawurlencode($q) : 'date=' .
 
 $data = [
     'cfg'  => cert_js_config('../'),
-    'rows' => array_map(fn($r) => ['id' => (int)$r['id'], 'name' => $r['full_name'], 'date' => $r['date_th'], 'eval' => (bool)$r['eval_done']], $list),
+    'rows' => array_map(function ($r) use ($pdo) {
+        $code = cert_code_for($pdo, (int)$r['id']);
+        return [
+            'id'     => (int)$r['id'],
+            'name'   => $r['full_name'],
+            'date'   => $r['date_th'],
+            'eval'   => (bool)$r['eval_done'],
+            'code'   => $code,
+            'verify' => verify_url($code),
+        ];
+    }, $list),
     'tag'  => $q !== '' ? 'ค้นหา_' . $q : ($sel === 'all' ? 'ทั้งหมด' : $sel),
 ];
 
@@ -120,6 +130,7 @@ page_header('ส่งออกเกียรติบัตร', admin_nav('ce
 
 <script src="../assets/vendor/jspdf.umd.min.js"></script>
 <script src="../assets/vendor/jszip.min.js"></script>
+<script src="../assets/vendor/qrcode.min.js"></script>
 <script src="../assets/cert.js?v=<?= @filemtime(__DIR__ . '/../assets/cert.js') ?>"></script>
 <script>
 (function(){
@@ -150,7 +161,7 @@ page_header('ส่งออกเกียรติบัตร', admin_nav('ce
       function next(){
         if (i >= list.length) return Promise.resolve();
         var r = list[i];
-        CQCert.draw(cv, img, D.cfg, r.name, r.date, MAXW);
+        CQCert.draw(cv, img, D.cfg, r.name, r.date, MAXW, { cert_code: r.code, verify_url: r.verify });
         if (zip) {
           var one = CQCert.newDoc(cv); CQCert.addCanvas(one, cv, true, Q);
           zip.file(String(i + 1).padStart(3, '0') + '_เกียรติบัตร_' + safe(r.name) + '.pdf', one.output('arraybuffer'));

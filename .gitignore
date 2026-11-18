@@ -6,6 +6,7 @@ config*.bak
 # คลังข้อสอบจริง — เก็บไว้เฉพาะในเครื่อง/โฮสต์ ไม่เผยแพร่
 inc/seed.php
 inc/bank2.php
+inc/bank3_ldd.php
 
 # ไฟล์ที่ผู้ดูแลอัปโหลด
 uploads/*
