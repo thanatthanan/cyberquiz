@@ -103,7 +103,7 @@ function page_header(string $title, string $nav = ''): void
         . '<link rel="icon" type="image/png" sizes="16x16" href="' . $root . 'assets/favicon-16x16.png">'
         . '<link rel="apple-touch-icon" href="' . $root . 'assets/apple-touch-icon.png">'
         . '<link rel="stylesheet" href="' . $root . 'assets/style.css?v=' . @filemtime(__DIR__ . '/../assets/style.css') . '"></head><body>'
-        . '<header class="top"><div class="wrap"><div class="brand"><img class="logo" src="' . $root . 'assets/logo.png" alt="สกมช. NCSA">'
+        . '<header class="top"><div class="wrap"><div class="brand"><a class="logo-link" href="' . $root . 'index.php" title="กลับหน้าแรก"><img class="logo" src="' . $root . 'assets/logo.png" alt="สกมช. NCSA"></a>'
         . '<span><b>' . $course . '</b><small>' . h(org_name()) . '</small></span></div></div></header>'
         . $nav
         . '<main class="wrap">';
@@ -195,6 +195,9 @@ function migrate(PDO $pdo): void
     if (!in_array('cert_code', $acols, true)) {
         $pdo->exec("ALTER TABLE attempts ADD COLUMN cert_code VARCHAR(24) NULL AFTER first_score, ADD UNIQUE KEY uq_cert_code (cert_code)");
     }
+
+    // ปรับชื่อแบบทดสอบในฐานข้อมูลเดิมจาก ก่อนเรียน/หลังเรียน เป็น ก่อนอบรม/หลังอบรม
+    $pdo->exec("UPDATE tests SET title = REPLACE(REPLACE(title, 'ก่อนเรียน', 'ก่อนอบรม'), 'หลังเรียน', 'หลังอบรม') WHERE title LIKE '%ก่อนเรียน%' OR title LIKE '%หลังเรียน%'");
 }
 
 function import_question_bank(PDO $pdo, string $settingKey, string $filename): void
@@ -520,9 +523,13 @@ function cert_modal_assets(bool $withLibs = true): string
         . '<script src="../assets/cert_modal.js?v=' . $v('cert_modal.js') . '"></script>';
 }
 /** ปุ่มเปิดป๊อปอัปเกียรติบัตร */
-function cert_view_button(string $name, string $datetime, string $label = 'ดู', string $cls = 'btn tiny'): string
+function cert_view_button(string $name, string $datetime, string $label = 'ดู', string $cls = 'btn tiny', string $certCode = ''): string
 {
-    return '<button type="button" class="' . h($cls) . '" data-cert-name="' . h($name) . '" data-cert-date="' . h(thai_date($datetime)) . '">' . h($label) . '</button>';
+    $attr = 'data-cert-name="' . h($name) . '" data-cert-date="' . h(thai_date($datetime)) . '"';
+    if ($certCode !== '') {
+        $attr .= ' data-cert-code="' . h($certCode) . '" data-cert-verify="' . h(verify_url($certCode)) . '"';
+    }
+    return '<button type="button" class="' . h($cls) . '" ' . $attr . '>' . h($label) . '</button>';
 }
 
 /* ---------- เมนูผู้ดูแล (navbar แบบ dropdown) ---------- */
@@ -543,8 +550,8 @@ function admin_nav(string $active = ''): string
             ['ผลแบบประเมิน (CSV)', 'export.php?type=eval'],
         ]],
         'links' => ['ลิงก์ผู้เข้าร่วม', null, [
-            ['เปิดหน้าแบบทดสอบก่อนเรียน', '../pretest.php', true],
-            ['เปิดหน้าแบบทดสอบหลังเรียน', '../posttest.php', true],
+            ['เปิดหน้าแบบทดสอบก่อนอบรม', '../pretest.php', true],
+            ['เปิดหน้าแบบทดสอบหลังอบรม', '../posttest.php', true],
         ]],
     ];
     $o = '<nav class="adminnav" aria-label="เมนูผู้ดูแล"><div class="wrap"><ul class="nav-main">';
@@ -560,7 +567,7 @@ function admin_nav(string $active = ''): string
         }
         $o .= '</div></details></li>';
     }
-    $o .= '</ul><ul class="nav-side"><li><details class="dd dd-right"><summary class="navlink">ผู้ดูแล</summary><div class="dd-menu">'
+    $o .= '</ul><ul class="nav-side"><li><a class="navlink" href="../index.php">← หน้าแรก</a></li><li><details class="dd dd-right"><summary class="navlink">ผู้ดูแล</summary><div class="dd-menu">'
         . '<form method="post" action="index.php">' . csrf_field() . '<input type="hidden" name="action" value="logout">'
         . '<button type="submit">ออกจากระบบ</button></form></div></details></li></ul></div>'
         . '<script>(function(){var dd=[].slice.call(document.querySelectorAll(".adminnav details"));'

@@ -14,5 +14,6 @@ uploads/*
 !uploads/index.html
 
 *.zip
+_deploy/
 .DS_Store
 Thumbs.db

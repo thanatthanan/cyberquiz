@@ -64,7 +64,7 @@ page_header('แก้ไขข้อมูลผู้เข้าร่วม'
   <p class="muted"><small>ผลคะแนนและแบบประเมินยังผูกกับผู้เข้าร่วมคนเดิม · หากผู้เข้าร่วมยังไม่ได้ทำ Posttest ต้องกรอกชื่อตามที่แก้ไขนี้เพื่อให้ระบบจับคู่กับ Pretest</small></p>
   <div class="toggles">
     <button class="btn primary">บันทึก</button>
-    <?php if ($postAttempt && cert_passed($postAttempt)): ?><?= cert_view_button($p['full_name'], $postAttempt['submitted_at'], 'ดูเกียรติบัตร', 'btn') ?><?php endif; ?>
+    <?php if ($postAttempt && cert_passed($postAttempt)): ?><?= cert_view_button($p['full_name'], $postAttempt['submitted_at'], 'ดูเกียรติบัตร', 'btn', cert_code_for($pdo, (int)$postAttempt['id'])) ?><?php endif; ?>
   </div>
 </form>
 

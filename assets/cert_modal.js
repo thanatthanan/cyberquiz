@@ -33,7 +33,7 @@
 
   function safe(s) { return String(s).replace(/[\\\/:*?"<>|\s]+/g, '_'); }
 
-  function open(name, date) {
+  function open(name, date, code, verifyUrl) {
     if (!modal) build();
     var cfg = window.CQ_CERT_CFG;
     current = { name: name, date: date, file: 'เกียรติบัตร_' + safe(name) + '.pdf' };
@@ -47,8 +47,9 @@
     var mine = current;
     imgPromise.then(function (img) {
       if (current !== mine) return;
-      CQCert.draw(cv, img, cfg, name, date);
-      st.textContent = 'ให้ไว้ ณ วันที่ ' + date;
+      var extra = code ? { cert_code: code, verify_url: verifyUrl || '' } : null;
+      CQCert.draw(cv, img, cfg, name, date, null, extra);
+      st.textContent = 'ให้ไว้ ณ วันที่ ' + date + (code ? ' · เลขที่ ' + code : '');
       dl.disabled = false;
       dl.focus();
     }).catch(function (e) { st.textContent = e.message; imgPromise = null; });
@@ -64,7 +65,7 @@
     var b = e.target.closest ? e.target.closest('[data-cert-name]') : null;
     if (!b) return;
     e.preventDefault();
-    open(b.getAttribute('data-cert-name'), b.getAttribute('data-cert-date'));
+    open(b.getAttribute('data-cert-name'), b.getAttribute('data-cert-date'), b.getAttribute('data-cert-code') || '', b.getAttribute('data-cert-verify') || '');
   });
 
   window.CQCertModal = { open: open, close: close };

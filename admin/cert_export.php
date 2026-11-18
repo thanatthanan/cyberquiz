@@ -67,7 +67,7 @@ page_header('ส่งออกเกียรติบัตร', admin_nav('ce
 <?php else: ?>
 <div class="grid two" style="margin-bottom:14px">
 <form class="card form" method="get">
-  <label>วันที่บนเกียรติบัตร (วันที่ทำแบบทดสอบหลังเรียนผ่าน)
+  <label>วันที่บนเกียรติบัตร (วันที่ทำแบบทดสอบหลังอบรมผ่าน)
     <select name="date" onchange="this.form.submit()">
       <?php if ($q !== ''): ?><option value="" selected disabled>— กำลังแสดงผลการค้นหา (ทุกวันที่) —</option><?php endif; ?>
       <?php foreach ($byDate as $d => $n): ?>
@@ -105,7 +105,7 @@ page_header('ส่งออกเกียรติบัตร', admin_nav('ce
   <div class="progress" id="prog" style="display:none"><div id="bar"></div></div>
   <div class="scroll">
     <table class="tbl" id="tbl">
-      <thead><tr><th><input type="checkbox" id="all" checked></th><th>#</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>คะแนนหลังเรียน</th><th>วันที่บนเกียรติบัตร</th><th>แบบประเมิน</th><th></th></tr></thead>
+      <thead><tr><th><input type="checkbox" id="all" checked></th><th>#</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>คะแนนหลังอบรม</th><th>วันที่บนเกียรติบัตร</th><th>แบบประเมิน</th><th></th></tr></thead>
       <tbody>
       <?php foreach ($list as $i => $r): ?>
         <tr data-eval="<?= $r['eval_done'] ? 1 : 0 ?>">
@@ -116,7 +116,7 @@ page_header('ส่งออกเกียรติบัตร', admin_nav('ce
           <td><?= (int)$r['score'] ?>/<?= (int)$r['total'] ?></td>
           <td><?= h($r['date_th']) ?></td>
           <td><?= $r['eval_done'] ? '<span class="up">ทำแล้ว</span>' : '<span class="muted">ยังไม่ทำ</span>' ?></td>
-          <td><?= cert_view_button($r['full_name'], $r['submitted_at']) ?></td>
+          <td><?= cert_view_button($r['full_name'], $r['submitted_at'], 'ดู', 'btn tiny', cert_code_for($pdo, (int)$r['id'])) ?></td>
         </tr>
       <?php endforeach; if (!$list): ?>
         <tr><td colspan="8" class="muted">ไม่พบผู้ผ่านเกณฑ์ที่ตรงกับคำค้นหา</td></tr>

@@ -187,6 +187,7 @@ if ($live) echo '<meta http-equiv="refresh" content="15">';
   <h1>แดชบอร์ดผลการทดสอบ</h1>
   <div class="actions">
     <a class="btn <?= $live ? 'ok' : '' ?>" id="livelink" href="?<?= $live ? '' : 'live=1&amp;' ?>tab=<?= h($_GET['tab'] ?? 'overview') ?>"><?= $live ? '⏸ หยุดอัปเดตอัตโนมัติ' : '⟳ อัปเดตอัตโนมัติทุก 15 วินาที' ?></a>
+    <a class="btn off" href="../index.php">← กลับหน้าแรก</a>
   </div>
 </div>
 <?php if ($flash): ?><div class="alert info"><?= h($flash) ?></div><?php endif; ?>
@@ -205,10 +206,10 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
 <div class="card linkbox" style="display:block">
   <small class="muted">ลิงก์สำหรับผู้เข้าร่วม (เครื่องที่ต่อเครือข่ายเดียวกัน) · ถ้าเครื่องอื่นเปิดไม่ได้ ให้อนุญาต Apache ใน Windows Firewall</small>
   <div class="linkrow">
-    <div><span class="badge pre">ก่อนเรียน</span> <?= !empty($byCode['pre']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
+    <div><span class="badge pre">ก่อนอบรม</span> <?= !empty($byCode['pre']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
       <div class="url"><?= h($lanUrl . 'pretest.php?openExternalBrowser=1') ?></div>
       <small class="muted">ใช้ลิงก์นี้สร้าง QR Code (สแกนผ่าน LINE จะเปิด Chrome/Safari ให้อัตโนมัติ)</small></div>
-    <div><span class="badge post">หลังเรียน</span> <?= !empty($byCode['post']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
+    <div><span class="badge post">หลังอบรม</span> <?= !empty($byCode['post']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
       <div class="url"><?= h($lanUrl . 'posttest.php?openExternalBrowser=1') ?></div>
       <small class="muted"><?= (cfg('require_pretest') ?? true) ? 'เครื่องเดิมกดเริ่มสอบได้เลย / ย้ายเครื่องค้นหาด้วยชื่อหรือรหัส 6 หลัก' : 'ไม่บังคับทำ Pretest ก่อน (ตั้งค่าใน config.php)' ?></small></div>
   </div>
@@ -289,7 +290,7 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   <label>ชื่อหน่วยงาน / ผู้จัด
     <input name="org_name" maxlength="500" value="<?= h(org_name()) ?>" placeholder="เช่น สำนักงานคณะกรรมการการรักษาความมั่นคงปลอดภัยไซเบอร์แห่งชาติ (สกมช.)">
   </label>
-  <label>จำนวนครั้งสูงสุดที่ทำแบบทดสอบหลังเรียนได้ (กรณีไม่ผ่านเกณฑ์)
+  <label>จำนวนครั้งสูงสุดที่ทำแบบทดสอบหลังอบรมได้ (กรณีไม่ผ่านเกณฑ์)
     <?php $curMax = post_max_attempts(); ?>
     <select name="post_max_attempts">
       <option value="1" <?= $curMax === 1 ? 'selected' : '' ?>>1 รอบ (ทำได้ครั้งเดียว ไม่ให้สอบซ่อม)</option>
@@ -376,7 +377,7 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
 <h2 class="section">สรุปตามหน่วยงาน</h2>
 <div class="card">
   <table class="tbl">
-    <thead><tr><th>หน่วยงาน</th><th>จำนวน (คน)</th><th>เฉลี่ยก่อนเรียน</th><th>เฉลี่ยหลังเรียน</th></tr></thead>
+    <thead><tr><th>หน่วยงาน</th><th>จำนวน (คน)</th><th>เฉลี่ยก่อนอบรม</th><th>เฉลี่ยหลังอบรม</th></tr></thead>
     <tbody>
     <?php foreach ($agencies as $g): ?>
       <tr><td><?= h($g['agency']) ?></td><td><?= (int)$g['n'] ?></td><td><?= fmt($g['pre']) ?></td><td><?= fmt($g['post']) ?></td></tr>
@@ -392,7 +393,7 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   <input class="search" id="search" placeholder="ค้นหาชื่อ, หน่วยงาน หรือรหัส 6 หลัก…">
   <div class="scroll">
   <table class="tbl" id="people">
-    <thead><tr><th>#</th><th>รหัส</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>ก่อนเรียน</th><th>หลังเรียน</th><th>เปลี่ยนแปลง</th><th>เกียรติบัตร</th><th>ส่งล่าสุด</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>รหัส</th><th>ชื่อ-สกุล</th><th>หน่วยงาน</th><th>ก่อนอบรม</th><th>หลังอบรม</th><th>เปลี่ยนแปลง</th><th>เกียรติบัตร</th><th>ส่งล่าสุด</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($people as $i => $p):
         $d = ($p['pre_s'] !== null && $p['post_s'] !== null) ? (int)$p['post_s'] - (int)$p['pre_s'] : null;
@@ -405,7 +406,7 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
         <td><?= $p['pre_s'] !== null ? (int)$p['pre_s'] . '/' . (int)$p['pre_t'] : '<span class="muted">–</span>' ?></td>
         <td><?= $p['post_s'] !== null ? (int)$p['post_s'] . '/' . (int)$p['post_t'] : '<span class="muted">–</span>' ?></td>
         <td class="<?= $d === null ? '' : ($d > 0 ? 'up' : ($d < 0 ? 'down' : '')) ?>"><?= $d === null ? '' : (($d > 0 ? '+' : '') . $d) ?></td>
-        <td><?php if ($p['post_s'] !== null && cert_passed(['code' => 'post', 'score' => $p['post_s'], 'total' => $p['post_t']])): ?><?= cert_view_button($p['full_name'], (string)$p['post_at'], 'ดู / ดาวน์โหลด') ?><?php elseif ($p['post_s'] !== null): ?><span class="muted">ไม่ผ่าน</span><?php endif; ?></td>
+        <td><?php if ($p['post_s'] !== null && cert_passed(['code' => 'post', 'score' => $p['post_s'], 'total' => $p['post_t']])): ?><?= cert_view_button($p['full_name'], (string)$p['post_at'], 'ดู / ดาวน์โหลด', 'btn tiny', cert_code_for($pdo, (int)$p['post_id'])) ?><?php elseif ($p['post_s'] !== null): ?><span class="muted">ไม่ผ่าน</span><?php endif; ?></td>
         <td><small><?= $last ? h(date('d/m H:i', strtotime($last))) : '' ?></small></td>
         <td><form method="post" action="index.php?tab=people" class="inline" onsubmit="return this.confirm_del.checked"><?= csrf_field() ?>
             <input type="hidden" name="action" value="delete_participant"><input type="hidden" name="pid" value="<?= (int)$p['id'] ?>">
