@@ -1,6 +1,6 @@
 # CyberQuiz — ระบบแบบทดสอบออนไลน์ Cyber Security Awareness
 
-เว็บแอป PHP + MySQL สำหรับจัดแบบทดสอบก่อน/หลังเรียน (Pretest / Posttest) พร้อมสถิติ แบบประเมินการอบรม และเกียรติบัตร PDF
+เว็บแอป PHP + MySQL สำหรับจัดแบบทดสอบก่อน/หลังอบรม (Pretest / Posttest) พร้อมสถิติ แบบประเมินการอบรม และเกียรติบัตร PDF
 
 ## ความสามารถ
 - ลิงก์ Pretest / Posttest แยกกัน (บังคับทำ Pretest ก่อนได้) — จับคู่ผลด้วยชื่อ-สกุล
@@ -28,8 +28,8 @@
 ## ลิงก์สำหรับผู้เข้าร่วม
 | หน้า | URL |
 |---|---|
-| ก่อนเรียน | `/cyberquiz/pretest.php` |
-| หลังเรียน | `/cyberquiz/posttest.php` |
+| ก่อนอบรม | `/cyberquiz/pretest.php` |
+| หลังอบรม | `/cyberquiz/posttest.php` |
 
 ให้เครื่องอื่นในห้องอบรมเข้าได้: ต่อเครือข่ายเดียวกัน แล้วใช้ลิงก์ IP ที่แสดงบนแดชบอร์ด (อนุญาต Apache ใน Windows Firewall)
 

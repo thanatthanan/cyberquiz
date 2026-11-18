@@ -3,13 +3,15 @@ require __DIR__ . '/inc/bootstrap.php';
 
 $id = (int)($_GET['id'] ?? 0);
 $pdo = db();
-$s = $pdo->prepare("SELECT a.*, t.code, p.token, p.full_name FROM attempts a JOIN tests t ON t.id=a.test_id
+$s = $pdo->prepare("SELECT a.*, t.code, t.project_id, p.token, p.full_name FROM attempts a JOIN tests t ON t.id=a.test_id
                     JOIN participants p ON p.id=a.participant_id WHERE a.id=?");
 $s->execute([$id]);
 $a = $s->fetch();
 $mine = $a && (in_array($id, $_SESSION['my_attempts'] ?? [], true) || hash_equals($a['token'], (string)($_COOKIE['cq_token'] ?? '')));
 if (!$mine) redirect('index.php');
-if (!cert_passed($a)) redirect('result.php?id=' . $id);
+$proj = project_by_id((int)$a['project_id']);
+if ($proj) $GLOBALS['CQ_PROJECT'] = $proj;
+if (!cert_passed($a, $proj)) redirect('result.php?id=' . $id);
 if (eval_done((int)$a['participant_id'])) redirect('cert.php?id=' . $id);
 
 $E = eval_items();

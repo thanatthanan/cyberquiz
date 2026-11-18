@@ -1,7 +1,16 @@
 <?php
 require __DIR__ . '/inc/bootstrap.php';
 
-$tests = tests();
+db();
+if (isset($_GET['p']) && $_GET['p'] !== '') {
+    $proj = front_project();
+} else {
+    $proj = active_project();
+    $_SESSION['front_project_id'] = (int)$proj['id'];
+}
+$GLOBALS['CQ_PROJECT'] = $proj;
+$pQ = ((int)$proj['id'] !== (int)active_project()['id'] && !empty($proj['slug'])) ? ('?p=' . rawurlencode($proj['slug'])) : '';
+$tests = tests((int)$proj['id']);
 page_header('หน้าหลัก');
 ?>
 <div class="card hero center">
@@ -13,7 +22,7 @@ page_header('หน้าหลัก');
 <div class="grid two">
   <?php foreach ($tests as $t):
     $isPost = ($t['code'] === 'post');
-    $href = $isPost ? 'posttest.php' : 'pretest.php';
+    $href = ($isPost ? 'posttest.php' : 'pretest.php') . $pQ;
   ?>
     <div class="card center" style="display:flex;flex-direction:column;justify-content:space-between;gap:12px">
       <div>
@@ -36,7 +45,7 @@ page_header('หน้าหลัก');
 </div>
 
 <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-  <a class="btn" href="verify.php">ตรวจสอบเกียรติบัตร</a>
+  <a class="btn" href="verify.php">ค้นหา / ตรวจสอบเกียรติบัตร (รวมโครงการที่ผ่านมา)</a>
   <a class="btn ghost" href="admin/">สำหรับผู้ดูแลระบบ →</a>
 </div>
 <?php page_footer();

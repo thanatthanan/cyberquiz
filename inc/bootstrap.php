@@ -76,15 +76,19 @@ function fatal(string $msg): void
     exit;
 }
 
-function course_title(): string
+function course_title(?array $proj = null): string
 {
     if (!empty($GLOBALS['CQ_NO_DB_HEADER'])) return (string)cfg('course_title');
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    if ($p && !empty($p['course_title'])) return (string)$p['course_title'];
     $v = trim((string)setting('course_title', ''));
     return $v !== '' ? $v : (string)cfg('course_title');
 }
-function org_name(): string
+function org_name(?array $proj = null): string
 {
     if (!empty($GLOBALS['CQ_NO_DB_HEADER'])) return (string)cfg('org_name');
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    if ($p && array_key_exists('org_name', $p) && trim((string)$p['org_name']) !== '') return (string)$p['org_name'];
     $v = setting('org_name', null);
     return ($v !== null && trim((string)$v) !== '') ? (string)$v : (string)cfg('org_name');
 }
@@ -198,6 +202,58 @@ function migrate(PDO $pdo): void
 
     // ปรับชื่อแบบทดสอบในฐานข้อมูลเดิมจาก ก่อนเรียน/หลังเรียน เป็น ก่อนอบรม/หลังอบรม
     $pdo->exec("UPDATE tests SET title = REPLACE(REPLACE(title, 'ก่อนเรียน', 'ก่อนอบรม'), 'หลังเรียน', 'หลังอบรม') WHERE title LIKE '%ก่อนเรียน%' OR title LIKE '%หลังเรียน%'");
+
+    // รองรับหลายโครงการ (Multi-Project)
+    $pdo->exec("CREATE TABLE IF NOT EXISTS projects (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        slug VARCHAR(64) NOT NULL UNIQUE,
+        course_title VARCHAR(500) NOT NULL,
+        org_name VARCHAR(500) NOT NULL DEFAULT '',
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        post_max_attempts INT NOT NULL DEFAULT 3,
+        cert_settings TEXT NULL,
+        created_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    $tcols = $pdo->query("SHOW COLUMNS FROM tests")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('project_id', $tcols, true)) {
+        $pdo->exec("ALTER TABLE tests ADD COLUMN project_id INT NOT NULL DEFAULT 1 AFTER id");
+        // เปลี่ยน unique index จาก code เป็น (project_id, code)
+        $idxs = $pdo->query("SHOW INDEX FROM tests WHERE Column_name='code' AND Non_unique=0")->fetchAll();
+        foreach ($idxs as $ix) {
+            if ($ix['Key_name'] !== 'PRIMARY') {
+                $pdo->exec("ALTER TABLE tests DROP INDEX `" . str_replace('`', '', $ix['Key_name']) . "`");
+            }
+        }
+        $pdo->exec("ALTER TABLE tests ADD UNIQUE KEY uq_proj_code (project_id, code), ADD INDEX idx_tests_proj (project_id)");
+    }
+
+    $pcols = $pdo->query("SHOW COLUMNS FROM participants")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('project_id', $pcols, true)) {
+        $pdo->exec("ALTER TABLE participants ADD COLUMN project_id INT NOT NULL DEFAULT 1 AFTER id, ADD INDEX idx_part_proj_name (project_id, name_key)");
+    }
+
+    // สร้างโครงการตั้งต้นจากข้อมูลเดิม (ถ้ายังไม่มีโครงการเลย)
+    if ((int)$pdo->query("SELECT COUNT(*) FROM projects")->fetchColumn() === 0) {
+        $rawSettings = $pdo->query("SELECT k, v FROM settings")->fetchAll(PDO::FETCH_KEY_PAIR);
+        $cTitle = trim((string)($rawSettings['course_title'] ?? ''));
+        if ($cTitle === '') $cTitle = (string)cfg('course_title');
+        $cOrg = trim((string)($rawSettings['org_name'] ?? ''));
+        if ($cOrg === '' && !array_key_exists('org_name', $rawSettings)) $cOrg = (string)cfg('org_name');
+        $maxAtt = isset($rawSettings['post_max_attempts']) ? max(0, (int)$rawSettings['post_max_attempts']) : 3;
+
+        $certCfg = [];
+        foreach (cert_defaults() as $ck => $cd) {
+            $certCfg[$ck] = $rawSettings[$ck] ?? $cd;
+        }
+        $certCfg['eval_required'] = $rawSettings['eval_required'] ?? '1';
+
+        $pdo->prepare("INSERT INTO projects (id, slug, course_title, org_name, is_active, post_max_attempts, cert_settings, created_at) VALUES (1, 'default', ?, ?, 1, ?, ?, NOW())")
+            ->execute([$cTitle, $cOrg, $maxAtt, json_encode($certCfg, JSON_UNESCAPED_UNICODE)]);
+        $pdo->exec("UPDATE tests SET project_id = 1 WHERE project_id = 0 OR project_id IS NULL");
+        $pdo->exec("UPDATE participants SET project_id = 1 WHERE project_id = 0 OR project_id IS NULL");
+        $pdo->prepare("INSERT INTO settings (k, v) VALUES ('active_project_id', '1') ON DUPLICATE KEY UPDATE v=VALUES(v)")->execute();
+    }
 }
 
 function import_question_bank(PDO $pdo, string $settingKey, string $filename): void
@@ -333,15 +389,93 @@ function install(PDO $pdo): void
     }
 }
 
-/* ---------- data access ---------- */
-function tests(): array
+/* ---------- projects ---------- */
+function projects_all(): array
 {
-    return db()->query("SELECT * FROM tests ORDER BY FIELD(code,'pre','post'), id")->fetchAll();
+    return db()->query("SELECT * FROM projects ORDER BY id DESC")->fetchAll();
 }
-function test_by_code(string $code): ?array
+function project_by_id(int $id): ?array
 {
-    $s = db()->prepare("SELECT * FROM tests WHERE code=?");
-    $s->execute([$code]);
+    $s = db()->prepare("SELECT * FROM projects WHERE id=?");
+    $s->execute([$id]);
+    return $s->fetch() ?: null;
+}
+function project_by_slug(string $slug): ?array
+{
+    $s = db()->prepare("SELECT * FROM projects WHERE slug=?");
+    $s->execute([$slug]);
+    return $s->fetch() ?: null;
+}
+function active_project(): array
+{
+    $aid = (int)setting('active_project_id', '0');
+    if ($aid > 0) {
+        $p = project_by_id($aid);
+        if ($p) return $p;
+    }
+    $p = db()->query("SELECT * FROM projects ORDER BY id ASC LIMIT 1")->fetch();
+    return $p ?: ['id' => 1, 'slug' => 'default', 'course_title' => (string)cfg('course_title'), 'org_name' => (string)cfg('org_name'), 'is_active' => 1, 'post_max_attempts' => 3, 'cert_settings' => null];
+}
+function front_project(): array
+{
+    if (isset($_GET['p']) && $_GET['p'] !== '') {
+        $p = project_by_slug(trim((string)$_GET['p']));
+        if ($p) {
+            $_SESSION['front_project_id'] = (int)$p['id'];
+            return $p;
+        }
+    }
+    if (!empty($_SESSION['front_project_id'])) {
+        $p = project_by_id((int)$_SESSION['front_project_id']);
+        if ($p) return $p;
+    }
+    return active_project();
+}
+function admin_project(): array
+{
+    if (isset($_REQUEST['project_id'])) {
+        $p = project_by_id((int)$_REQUEST['project_id']);
+        if ($p) {
+            $_SESSION['admin_project_id'] = (int)$p['id'];
+            return $p;
+        }
+    }
+    if (!empty($_SESSION['admin_project_id'])) {
+        $p = project_by_id((int)$_SESSION['admin_project_id']);
+        if ($p) return $p;
+    }
+    $p = active_project();
+    $_SESSION['admin_project_id'] = (int)$p['id'];
+    return $p;
+}
+function current_project_id(): int
+{
+    if (!empty($GLOBALS['CQ_PROJECT']['id'])) return (int)$GLOBALS['CQ_PROJECT']['id'];
+    return (int)active_project()['id'];
+}
+function save_project_cert_settings(int $projectId, array $kv): void
+{
+    $p = project_by_id($projectId);
+    if (!$p) return;
+    $cur = json_decode((string)($p['cert_settings'] ?? ''), true);
+    if (!is_array($cur)) $cur = [];
+    foreach ($kv as $k => $v) $cur[$k] = (string)$v;
+    db()->prepare("UPDATE projects SET cert_settings=? WHERE id=?")->execute([json_encode($cur, JSON_UNESCAPED_UNICODE), $projectId]);
+}
+
+/* ---------- data access ---------- */
+function tests(?int $projectId = null): array
+{
+    $pid = $projectId ?? current_project_id();
+    $s = db()->prepare("SELECT * FROM tests WHERE project_id=? ORDER BY FIELD(code,'pre','post'), id");
+    $s->execute([$pid]);
+    return $s->fetchAll();
+}
+function test_by_code(string $code, ?int $projectId = null): ?array
+{
+    $pid = $projectId ?? current_project_id();
+    $s = db()->prepare("SELECT * FROM tests WHERE project_id=? AND code=?");
+    $s->execute([$pid, $code]);
     return $s->fetch() ?: null;
 }
 function questions(int $testId): array
@@ -354,12 +488,21 @@ function q_options(array $q): array
 {
     return [$q['opt_a'], $q['opt_b'], $q['opt_c'], $q['opt_d']];
 }
-function current_participant(): ?array
+function cookie_participant_any(): ?array
 {
     $tok = $_COOKIE['cq_token'] ?? '';
     if (!preg_match('/^[a-f0-9]{32}$/', $tok)) return null;
     $s = db()->prepare("SELECT * FROM participants WHERE token=?");
     $s->execute([$tok]);
+    return $s->fetch() ?: null;
+}
+function current_participant(?int $projectId = null): ?array
+{
+    $tok = $_COOKIE['cq_token'] ?? '';
+    if (!preg_match('/^[a-f0-9]{32}$/', $tok)) return null;
+    $pid = $projectId ?? current_project_id();
+    $s = db()->prepare("SELECT * FROM participants WHERE token=? AND project_id=?");
+    $s->execute([$tok, $pid]);
     return $s->fetch() ?: null;
 }
 function attempt_of(int $pid, int $tid): ?array
@@ -407,38 +550,49 @@ function cert_defaults(): array
         'cert_date_prefix' => 'ให้ไว้ ณ วันที่ ',
     ];
 }
-function cert_settings(): array
+function cert_settings(?array $proj = null): array
 {
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    $raw = ($p && !empty($p['cert_settings'])) ? json_decode((string)$p['cert_settings'], true) : null;
     $out = [];
-    foreach (cert_defaults() as $k => $d) $out[$k] = (string)setting($k, $d);
+    foreach (cert_defaults() as $k => $d) {
+        if (is_array($raw) && array_key_exists($k, $raw)) {
+            $out[$k] = (string)$raw[$k];
+        } else {
+            $out[$k] = (string)setting($k, $d);
+        }
+    }
     return $out;
 }
 /** ค่าที่ส่งให้ JavaScript วาดเกียรติบัตร ($root = '' หรือ '../') */
-function cert_js_config(string $root = ''): array
+function cert_js_config(string $root = '', ?array $proj = null): array
 {
-    $s = cert_settings();
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    $s = cert_settings($p);
     $bg = $s['cert_bg'] !== '' && is_file(__DIR__ . '/../' . $s['cert_bg']) ? $s['cert_bg'] : 'assets/cert_default.jpg';
     return [
         'bg' => $root . $bg . '?v=' . @filemtime(__DIR__ . '/../' . $bg),
         'name_x' => (float)$s['cert_name_x'], 'name_y' => (float)$s['cert_name_y'], 'name_size' => (float)$s['cert_name_size'], 'name_color' => $s['cert_name_color'],
         'date_x' => (float)$s['cert_date_x'], 'date_y' => (float)$s['cert_date_y'], 'date_size' => (float)$s['cert_date_size'], 'date_color' => $s['cert_date_color'],
         'date_prefix' => $s['cert_date_prefix'],
-        'course_title' => $s['cert_show_course'] === '1' ? course_title() : '',
+        'course_title' => $s['cert_show_course'] === '1' ? course_title($p) : '',
         'course_x' => 50.0, 'course_y' => 70.1, 'course_size' => 3.5, 'course_color' => '#1f3864',
-        'org_name' => $s['cert_show_course'] === '1' ? org_name() : '',
+        'org_name' => $s['cert_show_course'] === '1' ? org_name($p) : '',
         'org_x' => 50.0, 'org_y' => 83.5, 'org_size' => 2.9, 'org_color' => '#1f3864',
     ];
 }
 /** ผ่านเกณฑ์รับเกียรติบัตรหรือไม่ (ใช้ผล Posttest) */
-function cert_passed(array $attempt): bool
+function cert_passed(array $attempt, ?array $proj = null): bool
 {
-    if (setting('cert_enabled', '1') !== '1') return false;
+    $s = cert_settings($proj);
+    if ($s['cert_enabled'] !== '1') return false;
     if (($attempt['code'] ?? '') !== 'post' || (int)$attempt['total'] <= 0) return false;
-    return ((int)$attempt['score'] / (int)$attempt['total'] * 100) >= (float)setting('cert_pass_pct', '60');
+    return ((int)$attempt['score'] / (int)$attempt['total'] * 100) >= (float)$s['cert_pass_pct'];
 }
-function cert_min_score(int $total): int
+function cert_min_score(int $total, ?array $proj = null): int
 {
-    return (int)ceil($total * (float)setting('cert_pass_pct', '60') / 100 - 1e-9);
+    $s = cert_settings($proj);
+    return (int)ceil($total * (float)$s['cert_pass_pct'] / 100 - 1e-9);
 }
 function base_url(): string
 {
@@ -474,16 +628,19 @@ function cert_code_for(PDO $pdo, int $attemptId): string
     }
     return 'CQ-' . $yr . '-' . str_pad((string)$attemptId, 6, '0', STR_PAD_LEFT);
 }
-function post_max_attempts(): int
+function post_max_attempts(?array $proj = null): int
 {
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    if ($p && array_key_exists('post_max_attempts', $p)) return max(0, (int)$p['post_max_attempts']);
     return max(0, (int)setting('post_max_attempts', '3'));
 }
-function can_retake_post(array $attempt): bool
+function can_retake_post(array $attempt, ?array $proj = null): bool
 {
+    $s = cert_settings($proj);
     if (($attempt['code'] ?? '') !== 'post') return false;
-    if (setting('cert_enabled', '1') !== '1') return false;
-    if (cert_passed($attempt)) return false;
-    $max = post_max_attempts();
+    if ($s['cert_enabled'] !== '1') return false;
+    if (cert_passed($attempt, $proj)) return false;
+    $max = post_max_attempts($proj);
     if ($max === 1) return false;
     if ($max === 0) return true;
     return (int)($attempt['attempt_no'] ?? 1) < $max;
@@ -502,8 +659,13 @@ function eval_rating_keys(): array
     return $keys;
 }
 /** ต้องทำแบบประเมินก่อนรับเกียรติบัตรหรือไม่ */
-function eval_required(): bool
+function eval_required(?array $proj = null): bool
 {
+    $p = $proj ?? ($GLOBALS['CQ_PROJECT'] ?? null);
+    if ($p && !empty($p['cert_settings'])) {
+        $raw = json_decode((string)$p['cert_settings'], true);
+        if (is_array($raw) && array_key_exists('eval_required', $raw)) return (string)$raw['eval_required'] === '1';
+    }
     return setting('eval_required', '1') === '1';
 }
 function eval_done(int $participantId): bool
@@ -536,7 +698,9 @@ function cert_view_button(string $name, string $datetime, string $label = 'ด�
 function admin_nav(string $active = ''): string
 {
     $tests = [];
-    try { $tests = tests(); } catch (Throwable $e) { }
+    $proj = $GLOBALS['CQ_PROJECT'] ?? null;
+    $pQ = ($proj && !empty($proj['slug'])) ? ('?p=' . rawurlencode($proj['slug'])) : '';
+    try { $tests = tests($proj ? (int)$proj['id'] : null); } catch (Throwable $e) { }
     $menu = [
         'dash' => ['แดชบอร์ด', 'index.php', null],
         'quiz' => ['ข้อสอบ', null, array_map(fn($t) => ['จัดการ' . $t['title'], 'questions.php?test=' . rawurlencode($t['code'])], $tests)],
@@ -550,8 +714,8 @@ function admin_nav(string $active = ''): string
             ['ผลแบบประเมิน (CSV)', 'export.php?type=eval'],
         ]],
         'links' => ['ลิงก์ผู้เข้าร่วม', null, [
-            ['เปิดหน้าแบบทดสอบก่อนอบรม', '../pretest.php', true],
-            ['เปิดหน้าแบบทดสอบหลังอบรม', '../posttest.php', true],
+            ['เปิดหน้าแบบทดสอบก่อนอบรม', '../pretest.php' . $pQ, true],
+            ['เปิดหน้าแบบทดสอบหลังอบรม', '../posttest.php' . $pQ, true],
         ]],
     ];
     $o = '<nav class="adminnav" aria-label="เมนูผู้ดูแล"><div class="wrap"><ul class="nav-main">';

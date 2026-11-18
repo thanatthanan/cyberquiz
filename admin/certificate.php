@@ -2,24 +2,41 @@
 require __DIR__ . '/../inc/bootstrap.php';
 $PAGE_ROOT = '../';
 if (!is_admin()) redirect('index.php');
-db();
+$pdo = db();
+$proj = admin_project();
+$projId = (int)$proj['id'];
+$GLOBALS['CQ_PROJECT'] = $proj;
 
 $uploadDir = __DIR__ . '/../uploads';
 $errors = [];
+
+$bgInUseElsewhere = function (string $path) use ($pdo, $projId): bool {
+    if ($path === '') return false;
+    foreach (projects_all() as $ap) {
+        if ((int)$ap['id'] === $projId) continue;
+        $c = json_decode((string)($ap['cert_settings'] ?? ''), true);
+        if (is_array($c) && ($c['cert_bg'] ?? '') === $path) return true;
+    }
+    return false;
+};
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
     $act = $_POST['action'] ?? 'save';
 
     if ($act === 'reset_bg') {
-        $old = (string)setting('cert_bg', '');
-        if ($old !== '' && strpos($old, 'uploads/') === 0 && is_file(__DIR__ . '/../' . $old)) @unlink(__DIR__ . '/../' . $old);
-        set_setting('cert_bg', '');
+        $old = cert_settings($proj)['cert_bg'];
+        if ($old !== '' && strpos($old, 'uploads/') === 0 && is_file(__DIR__ . '/../' . $old) && !$bgInUseElsewhere($old)) {
+            @unlink(__DIR__ . '/../' . $old);
+        }
+        save_project_cert_settings($projId, ['cert_bg' => '']);
         $_SESSION['flash'] = 'กลับไปใช้ภาพพื้นหลังตั้งต้นแล้ว';
         redirect('certificate.php');
     }
     if ($act === 'reset_layout') {
-        foreach (cert_defaults() as $k => $v) if (!in_array($k, ['cert_bg', 'cert_enabled', 'cert_pass_pct'], true)) set_setting($k, $v);
+        $rst = [];
+        foreach (cert_defaults() as $k => $v) if (!in_array($k, ['cert_bg', 'cert_enabled', 'cert_pass_pct'], true)) $rst[$k] = $v;
+        save_project_cert_settings($projId, $rst);
         $_SESSION['flash'] = 'คืนค่าตำแหน่งและขนาดตัวอักษรเป็นค่าตั้งต้นแล้ว';
         redirect('certificate.php');
     }
@@ -33,17 +50,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $v = (string)($_POST[$k] ?? '');
         return preg_match('/^#[0-9a-fA-F]{6}$/', $v) ? $v : '#1f3864';
     };
-    set_setting('cert_enabled', !empty($_POST['cert_enabled']) ? '1' : '0');
-    set_setting('eval_required', !empty($_POST['eval_required']) ? '1' : '0');
-    set_setting('cert_show_course', !empty($_POST['cert_show_course']) ? '1' : '0');
-    set_setting('cert_pass_pct', $num('cert_pass_pct', 0, 100));
+    $upd = [
+        'cert_enabled'     => !empty($_POST['cert_enabled']) ? '1' : '0',
+        'eval_required'    => !empty($_POST['eval_required']) ? '1' : '0',
+        'cert_show_course' => !empty($_POST['cert_show_course']) ? '1' : '0',
+        'cert_pass_pct'    => $num('cert_pass_pct', 0, 100),
+        'cert_date_prefix' => mb_substr((string)($_POST['cert_date_prefix'] ?? ''), 0, 100),
+    ];
     foreach (['name', 'date'] as $f) {
-        set_setting("cert_{$f}_x", $num("cert_{$f}_x", 0, 100));
-        set_setting("cert_{$f}_y", $num("cert_{$f}_y", 0, 100));
-        set_setting("cert_{$f}_size", $num("cert_{$f}_size", 0.5, 30));
-        set_setting("cert_{$f}_color", $color("cert_{$f}_color"));
+        $upd["cert_{$f}_x"]     = $num("cert_{$f}_x", 0, 100);
+        $upd["cert_{$f}_y"]     = $num("cert_{$f}_y", 0, 100);
+        $upd["cert_{$f}_size"]  = $num("cert_{$f}_size", 0.5, 30);
+        $upd["cert_{$f}_color"] = $color("cert_{$f}_color");
     }
-    set_setting('cert_date_prefix', mb_substr((string)($_POST['cert_date_prefix'] ?? ''), 0, 100));
 
     // ---- อัปโหลดภาพพื้นหลัง ----
     $f = $_FILES['bg'] ?? null;
@@ -61,15 +80,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
                 $name = 'cert_bg_' . date('Ymd_His') . '.' . $ext;
                 if (move_uploaded_file($f['tmp_name'], $uploadDir . '/' . $name)) {
-                    $old = (string)setting('cert_bg', '');
-                    if ($old !== '' && strpos($old, 'uploads/') === 0 && is_file(__DIR__ . '/../' . $old)) @unlink(__DIR__ . '/../' . $old);
-                    set_setting('cert_bg', 'uploads/' . $name);
+                    $old = cert_settings($proj)['cert_bg'];
+                    if ($old !== '' && strpos($old, 'uploads/') === 0 && is_file(__DIR__ . '/../' . $old) && !$bgInUseElsewhere($old)) {
+                        @unlink(__DIR__ . '/../' . $old);
+                    }
+                    $upd['cert_bg'] = 'uploads/' . $name;
                 } else {
                     $errors[] = 'บันทึกไฟล์ไม่ได้ — ตรวจสอบสิทธิ์การเขียนโฟลเดอร์ uploads';
                 }
             }
         }
     }
+    save_project_cert_settings($projId, $upd);
     $_SESSION['flash'] = $errors ? implode('<br>', $errors) : 'บันทึกการตั้งค่าเกียรติบัตรแล้ว';
     $_SESSION['flash_err'] = (bool)$errors;
     redirect('certificate.php');
@@ -78,8 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $flash = $_SESSION['flash'] ?? '';
 $flashErr = !empty($_SESSION['flash_err']);
 unset($_SESSION['flash'], $_SESSION['flash_err']);
-$s = cert_settings();
-$js = cert_js_config('../');
+$s = cert_settings($proj);
+$js = cert_js_config('../', $proj);
 $custom = $s['cert_bg'] !== '' && is_file(__DIR__ . '/../' . $s['cert_bg']);
 
 function numfield(string $label, string $name, string $val, string $step = '0.1', string $unit = '%'): string
@@ -101,7 +123,7 @@ page_header('ตั้งค่าเกียรติบัตร', admin_nav(
       <label><input type="checkbox" name="cert_enabled" value="1" <?= $s['cert_enabled'] === '1' ? 'checked' : '' ?>> เปิดให้ดาวน์โหลดเกียรติบัตร</label>
       <label><input type="checkbox" name="eval_required" value="1" <?= eval_required() ? 'checked' : '' ?>> ต้องทำแบบประเมินการอบรมก่อนดาวน์โหลด</label>
       <label><input type="checkbox" name="cert_show_course" value="1" <?= $s['cert_show_course'] === '1' ? 'checked' : '' ?>> แสดงชื่อหัวข้อการอบรมและหน่วยงานผู้จัดอัตโนมัติ (ดึงจากหน้าตั้งค่า)</label>
-      <label>เกณฑ์ผ่าน: คะแนนแบบทดสอบหลังเรียนอย่างน้อย (%)
+      <label>เกณฑ์ผ่าน: คะแนนแบบทดสอบหลังอบรมอย่างน้อย (%)
         <input type="number" name="cert_pass_pct" min="0" max="100" step="1" value="<?= h($s['cert_pass_pct']) ?>"></label>
       <small class="muted">เช่น 60% ของ 10 ข้อ = ต้องได้ 6 คะแนนขึ้นไป · ใช้วันที่ส่ง Posttest เป็นวันที่บนเกียรติบัตร</small>
     </fieldset>

@@ -4,7 +4,7 @@
 return json_decode(<<<'JSON'
 {
  "pre": {
-  "title": "แบบทดสอบก่อนเรียน (Pretest)",
+  "title": "แบบทดสอบก่อนอบรม (Pretest)",
   "questions": [
    {
     "topic": "รหัสผ่าน",
@@ -64,7 +64,7 @@ return json_decode(<<<'JSON'
   ]
  },
  "post": {
-  "title": "แบบทดสอบหลังเรียน (Posttest)",
+  "title": "แบบทดสอบหลังอบรม (Posttest)",
   "questions": [
    {
     "topic": "MFA",

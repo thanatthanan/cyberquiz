@@ -12,6 +12,8 @@ $s = $pdo->prepare("SELECT * FROM participants WHERE id=?");
 $s->execute([$id]);
 $p = $s->fetch();
 if (!$p) redirect($back);
+$proj = project_by_id((int)$p['project_id']);
+if ($proj) $GLOBALS['CQ_PROJECT'] = $proj;
 
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -22,8 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'กรุณากรอกชื่อ-สกุลให้ถูกต้อง';
     } else {
         $key = name_key($name);
-        $dup = $pdo->prepare("SELECT full_name FROM participants WHERE name_key=? AND id<>? LIMIT 1");
-        $dup->execute([$key, $id]);
+        $dup = $pdo->prepare("SELECT full_name FROM participants WHERE project_id=? AND name_key=? AND id<>? LIMIT 1");
+        $dup->execute([(int)$p['project_id'], $key, $id]);
         $other = $dup->fetchColumn();
         if ($other !== false && empty($_POST['confirm_dup'])) {
             $error = 'มีผู้เข้าร่วมอีกคนใช้ชื่อ “' . $other . '” อยู่แล้ว — ถ้าเป็นคนละคนกัน ให้ติ๊ก “ยืนยันบันทึก” แล้วกดบันทึกอีกครั้ง';
@@ -64,7 +66,7 @@ page_header('แก้ไขข้อมูลผู้เข้าร่วม'
   <p class="muted"><small>ผลคะแนนและแบบประเมินยังผูกกับผู้เข้าร่วมคนเดิม · หากผู้เข้าร่วมยังไม่ได้ทำ Posttest ต้องกรอกชื่อตามที่แก้ไขนี้เพื่อให้ระบบจับคู่กับ Pretest</small></p>
   <div class="toggles">
     <button class="btn primary">บันทึก</button>
-    <?php if ($postAttempt && cert_passed($postAttempt)): ?><?= cert_view_button($p['full_name'], $postAttempt['submitted_at'], 'ดูเกียรติบัตร', 'btn', cert_code_for($pdo, (int)$postAttempt['id'])) ?><?php endif; ?>
+    <?php if ($postAttempt && cert_passed($postAttempt, $proj)): ?><?= cert_view_button($p['full_name'], $postAttempt['submitted_at'], 'ดูเกียรติบัตร', 'btn', cert_code_for($pdo, (int)$postAttempt['id'])) ?><?php endif; ?>
   </div>
 </form>
 

@@ -3,9 +3,12 @@ require __DIR__ . '/../inc/bootstrap.php';
 $PAGE_ROOT = '../';
 if (!is_admin()) redirect('index.php');
 $pdo = db();
+$proj = admin_project();
+$projId = (int)$proj['id'];
+$GLOBALS['CQ_PROJECT'] = $proj;
 
 // ผู้ที่ผ่านเกณฑ์ Posttest ทั้งหมด (วันที่บนเกียรติบัตร = วันที่ส่ง Posttest)
-$post = test_by_code('post');
+$post = test_by_code('post', $projId);
 $s = $pdo->prepare("SELECT a.id, a.score, a.total, a.submitted_at, p.id pid, p.full_name, p.agency,
                            (e.id IS NOT NULL) eval_done
                     FROM attempts a JOIN participants p ON p.id=a.participant_id
@@ -15,7 +18,7 @@ $s->execute([(int)($post['id'] ?? 0)]);
 $rows = [];
 $byDate = [];
 foreach ($s->fetchAll() as $r) {
-    if (!cert_passed($r + ['code' => 'post'])) continue;
+    if (!cert_passed($r + ['code' => 'post'], $proj)) continue;
     $d = substr($r['submitted_at'], 0, 10);
     $r['date'] = $d;
     $r['date_th'] = thai_date($r['submitted_at']);
@@ -38,7 +41,7 @@ if ($q !== '') {
 $backUrl = 'cert_export.php?' . ($q !== '' ? 'q=' . rawurlencode($q) : 'date=' . rawurlencode($sel));
 
 $data = [
-    'cfg'  => cert_js_config('../'),
+    'cfg'  => cert_js_config('../', $proj),
     'rows' => array_map(function ($r) use ($pdo) {
         $code = cert_code_for($pdo, (int)$r['id']);
         return [

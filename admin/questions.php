@@ -3,10 +3,13 @@ require __DIR__ . '/../inc/bootstrap.php';
 $PAGE_ROOT = '../';
 if (!is_admin()) redirect('index.php');
 $pdo = db();
+$proj = admin_project();
+$projId = (int)$proj['id'];
+$GLOBALS['CQ_PROJECT'] = $proj;
 
-$tests = tests();
+$tests = tests($projId);
 $code = $_GET['test'] ?? ($tests[0]['code'] ?? 'pre');
-$test = test_by_code((string)$code);
+$test = test_by_code((string)$code, $projId);
 if (!$test) redirect('questions.php');
 $tid = (int)$test['id'];
 
@@ -52,7 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $flash = $_SESSION['flash'] ?? '';
 unset($_SESSION['flash']);
-$counts = $pdo->query("SELECT test_id, COUNT(*) FROM questions GROUP BY test_id")->fetchAll(PDO::FETCH_KEY_PAIR);
+$cStmt = $pdo->prepare("SELECT q.test_id, COUNT(*) FROM questions q JOIN tests t ON t.id=q.test_id WHERE t.project_id=? GROUP BY q.test_id");
+$cStmt->execute([$projId]);
+$counts = $cStmt->fetchAll(PDO::FETCH_KEY_PAIR);
 $qs = questions($tid);
 $s = $pdo->prepare("SELECT COUNT(*) FROM attempts WHERE test_id=?");
 $s->execute([$tid]);

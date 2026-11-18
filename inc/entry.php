@@ -5,14 +5,19 @@
  */
 require __DIR__ . '/bootstrap.php';
 
-$test = test_by_code($CODE);
+$pdo = db();
+$proj = front_project();
+$projId = (int)$proj['id'];
+$GLOBALS['CQ_PROJECT'] = $proj;
+
+$test = test_by_code($CODE, $projId);
 if (!$test) fatal('ไม่พบแบบทดสอบนี้');
 $isPost = ($CODE === 'post');
 $requirePre = $isPost && (cfg('require_pretest') ?? true);
-$preTest = $requirePre ? test_by_code('pre') : null;
+$preTest = $requirePre ? test_by_code('pre', $projId) : null;
 
-$pdo = db();
-$me = current_participant();
+$me = current_participant($projId);
+$cookieAny = $me ?: cookie_participant_any();
 $switch = $isPost && !empty($_GET['switch']);
 $error = '';
 $lookupQuery = '';
@@ -49,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$me) {
             $error = 'ไม่พบข้อมูลเดิมในเครื่องนี้ กรุณาค้นหาด้วยชื่อ-สกุล หรือรหัส 6 หลัก';
         } elseif ($requirePre && $preTest && !attempt_of((int)$me['id'], (int)$preTest['id'])) {
-            $error = 'ยังไม่พบผลแบบทดสอบก่อนเรียนของ “' . $me['full_name'] . '” — กรุณาทำ Pretest ก่อน หรือค้นหาจากชื่อ/รหัส 6 หลัก';
+            $error = 'ยังไม่พบผลแบบทดสอบก่อนอบรมของ “' . $me['full_name'] . '” — กรุณาทำ Pretest ก่อน หรือค้นหาจากชื่อ/รหัส 6 หลัก';
         } else {
             start_quiz_for($me, $test);
         }
@@ -59,13 +64,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$pid || !in_array($pid, $allowed, true)) {
             $error = 'รายการที่เลือกไม่ถูกต้องหรือหมดอายุ กรุณาค้นหาใหม่อีกครั้ง';
         } else {
-            $s = $pdo->prepare("SELECT * FROM participants WHERE id=?");
-            $s->execute([$pid]);
+            $s = $pdo->prepare("SELECT * FROM participants WHERE id=? AND project_id=?");
+            $s->execute([$pid, $projId]);
             $p = $s->fetch() ?: null;
             if (!$p) {
                 $error = 'ไม่พบข้อมูลผู้เข้าร่วมนี้';
             } elseif ($requirePre && $preTest && !attempt_of($pid, (int)$preTest['id'])) {
-                $error = '“' . $p['full_name'] . '” ยังไม่ได้ทำแบบทดสอบก่อนเรียน (Pretest) — กรุณาทำ Pretest ก่อน';
+                $error = '“' . $p['full_name'] . '” ยังไม่ได้ทำแบบทดสอบก่อนอบรม (Pretest) — กรุณาทำ Pretest ก่อน';
             } else {
                 unset($_SESSION['lookup_allowed']);
                 start_quiz_for($p, $test);
@@ -82,15 +87,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // 1) ค้นหาจากรหัสประจำตัว 6 หลัก (ref_code)
             if ($qCode !== '' && strlen($qCode) >= 4) {
-                $s = $pdo->prepare("SELECT * FROM participants WHERE ref_code=? OR ref_code LIKE ? ORDER BY (ref_code=?) DESC, id DESC LIMIT 10");
-                $s->execute([$qCode, '%' . $qCode . '%', $qCode]);
+                $s = $pdo->prepare("SELECT * FROM participants WHERE project_id=? AND (ref_code=? OR ref_code LIKE ?) ORDER BY (ref_code=?) DESC, id DESC LIMIT 10");
+                $s->execute([$projId, $qCode, '%' . $qCode . '%', $qCode]);
                 $rows = $s->fetchAll();
             }
             // 2) ค้นหาจากชื่อ-สกุล (บางส่วนหรือทั้งหมด)
             if (!$rows) {
                 $nk = name_key($lookupNorm);
-                $s = $pdo->prepare("SELECT * FROM participants WHERE name_key LIKE ? OR full_name LIKE ? ORDER BY id DESC LIMIT 15");
-                $s->execute(['%' . $nk . '%', '%' . $lookupQuery . '%']);
+                $s = $pdo->prepare("SELECT * FROM participants WHERE project_id=? AND (name_key LIKE ? OR full_name LIKE ?) ORDER BY id DESC LIMIT 15");
+                $s->execute([$projId, '%' . $nk . '%', '%' . $lookupQuery . '%']);
                 $rows = $s->fetchAll();
             }
 
@@ -116,14 +121,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($me && $me['name_key'] === $key) {
                 $p = $me;
             } elseif ($isPost) {
-                $s = $pdo->prepare("SELECT * FROM participants WHERE name_key=? ORDER BY id LIMIT 1");
-                $s->execute([$key]);
+                $s = $pdo->prepare("SELECT * FROM participants WHERE project_id=? AND name_key=? ORDER BY id LIMIT 1");
+                $s->execute([$projId, $key]);
                 $p = $s->fetch() ?: null;
             }
         }
 
         if (!$error && $requirePre && $preTest && !($p && attempt_of((int)$p['id'], (int)$preTest['id']))) {
-            $error = 'ไม่พบผลแบบทดสอบก่อนเรียนของ “' . $name . '” — กรุณาทำ Pretest ก่อน';
+            $error = 'ไม่พบผลแบบทดสอบก่อนอบรมของ “' . $name . '” — กรุณาทำ Pretest ก่อน';
         }
 
         if (!$error) {
@@ -135,8 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $tok = bin2hex(random_bytes(16));
                 $ref = generate_ref_code($pdo);
-                $pdo->prepare("INSERT INTO participants (token,full_name,agency,ref_code,name_key,created_at) VALUES (?,?,?,?,?,NOW())")
-                    ->execute([$tok, $name, $agency, $ref, $key]);
+                $pdo->prepare("INSERT INTO participants (project_id,token,full_name,agency,ref_code,name_key,created_at) VALUES (?,?,?,?,?,?,NOW())")
+                    ->execute([$projId, $tok, $name, $agency, $ref, $key]);
                 $p = ['id' => (int)$pdo->lastInsertId(), 'token' => $tok, 'ref_code' => $ref];
             }
             start_quiz_for($p, $test);
@@ -150,11 +155,11 @@ $preDone = ($me && $preTest) ? attempt_of((int)$me['id'], (int)$preTest['id']) :
 page_header($test['title']);
 ?>
 <div class="card hero">
-  <span class="badge <?= $isPost ? 'post' : 'pre' ?>"><?= $isPost ? 'หลังเรียน' : 'ก่อนเรียน' ?></span>
+  <span class="badge <?= $isPost ? 'post' : 'pre' ?>"><?= $isPost ? 'หลังอบรม' : 'ก่อนอบรม' ?></span>
   <h1><?= h($test['title']) ?></h1>
   <p class="muted"><?= $isPost
-      ? 'ยืนยันตัวตนเพื่อทำแบบทดสอบหลังเรียน และเปรียบเทียบพัฒนาการกับคะแนนก่อนเรียน'
-      : 'กรอกชื่อ-สกุลและหน่วยงานเพียงครั้งเดียว ระบบจะจดจำข้อมูลและสร้างรหัสประจำตัวไว้ใช้ต่อในแบบทดสอบหลังเรียน' ?></p>
+      ? 'ยืนยันตัวตนเพื่อทำแบบทดสอบหลังอบรม และเปรียบเทียบพัฒนาการกับคะแนนก่อนอบรม'
+      : 'กรอกชื่อ-สกุลและหน่วยงานเพียงครั้งเดียว ระบบจะจดจำข้อมูลและสร้างรหัสประจำตัวไว้ใช้ต่อในแบบทดสอบหลังอบรม' ?></p>
 </div>
 
 <?php if ($error): ?><div class="alert"><?= h($error) ?></div><?php endif; ?>
@@ -191,16 +196,16 @@ page_header($test['title']);
       <?php if (!empty($me['ref_code'])): ?> · รหัสประจำตัว: <b><?= h($me['ref_code']) ?></b><?php endif; ?>
     </p>
     <?php if ($preDone): ?>
-      <p class="alert info">ผลก่อนเรียนของคุณ: <b><?= (int)$preDone['score'] ?>/<?= (int)$preDone['total'] ?></b> คะแนน</p>
+      <p class="alert info">ผลก่อนอบรมของคุณ: <b><?= (int)$preDone['score'] ?>/<?= (int)$preDone['total'] ?></b> คะแนน</p>
     <?php endif; ?>
-    <button class="btn primary" type="submit">เริ่มทำแบบทดสอบหลังเรียน</button>
+    <button class="btn primary" type="submit">เริ่มทำแบบทดสอบหลังอบรม</button>
     <p style="margin-top:14px;margin-bottom:0"><a class="muted" href="posttest.php?switch=1"><small>ไม่ใช่คุณ? เปลี่ยนผู้ใช้งาน / ค้นหาด้วยชื่อหรือรหัส</small></a></p>
   </form>
 
 <?php elseif ($isPost): ?>
   <!-- กรณีไม่มี cookie / เปิดผ่าน LINE Browser / เปลี่ยนเครื่อง: ค้นหาและยืนยันตัวตน -->
   <?php if ($me && !$switch && $requirePre && !$preDone): ?>
-    <div class="alert info">เครื่องนี้บันทึกชื่อ <b><?= h($me['full_name']) ?></b> ไว้ แต่ยังไม่พบผลแบบทดสอบก่อนเรียน — หากทำ Pretest จากเครื่องอื่น กรุณาค้นหาด้วยรหัส 6 หลักหรือชื่อ-สกุลด้านล่าง หรือ <a href="pretest.php"><b>ไปทำ Pretest ก่อน</b></a></div>
+    <div class="alert info">เครื่องนี้บันทึกชื่อ <b><?= h($me['full_name']) ?></b> ไว้ แต่ยังไม่พบผลแบบทดสอบก่อนอบรม — หากทำ Pretest จากเครื่องอื่น กรุณาค้นหาด้วยรหัส 6 หลักหรือชื่อ-สกุลด้านล่าง หรือ <a href="pretest.php"><b>ไปทำ Pretest ก่อน</b></a></div>
   <?php endif; ?>
 
   <?php if (is_array($candidates) && count($candidates) > 0): ?>
@@ -226,9 +231,9 @@ page_header($test['title']);
                   <span style="background:#e2e8f0;color:var(--navy);font-weight:700;font-size:13px;padding:2px 10px;border-radius:99px">รหัส <?= h($c['ref_code']) ?></span>
                 <?php endif; ?>
                 <?php if ($cPre): ?>
-                  <span style="background:var(--okbg);color:var(--ok);font-weight:600;font-size:13px;padding:2px 10px;border-radius:99px">✓ ทำก่อนเรียนแล้ว (<?= (int)$cPre['score'] ?>/<?= (int)$cPre['total'] ?>)</span>
+                  <span style="background:var(--okbg);color:var(--ok);font-weight:600;font-size:13px;padding:2px 10px;border-radius:99px">✓ ทำก่อนอบรมแล้ว (<?= (int)$cPre['score'] ?>/<?= (int)$cPre['total'] ?>)</span>
                 <?php elseif ($requirePre): ?>
-                  <span style="background:var(--badbg);color:var(--bad);font-weight:600;font-size:13px;padding:2px 10px;border-radius:99px">✗ ยังไม่พบผลก่อนเรียน</span>
+                  <span style="background:var(--badbg);color:var(--bad);font-weight:600;font-size:13px;padding:2px 10px;border-radius:99px">✗ ยังไม่พบผลก่อนอบรม</span>
                 <?php endif; ?>
               </div>
             </div>
@@ -236,7 +241,7 @@ page_header($test['title']);
               <?php if ($cDone): ?>
                 <button class="btn" type="submit" style="padding:10px 18px;font-size:16px">ดูผลคะแนน →</button>
               <?php elseif ($requirePre && !$cPre): ?>
-                <a class="btn off" href="pretest.php" style="padding:10px 18px;font-size:15px">ไปทำก่อนเรียน</a>
+                <a class="btn off" href="pretest.php" style="padding:10px 18px;font-size:15px">ไปทำก่อนอบรม</a>
               <?php else: ?>
                 <button class="btn primary" type="submit" style="padding:11px 20px;font-size:16px">เลือกชื่อนี้ และเริ่มสอบ →</button>
               <?php endif; ?>
@@ -256,7 +261,7 @@ page_header($test['title']);
     </label>
     <button class="btn <?= empty($candidates) ? 'primary' : '' ?>" type="submit">ค้นหาข้อมูลเดิม</button>
     <?php if ($requirePre): ?>
-      <p class="muted" style="margin:0"><small>ยังไม่เคยทำแบบทดสอบก่อนเรียน? <a href="pretest.php">คลิกที่นี่เพื่อทำ Pretest</a></small></p>
+      <p class="muted" style="margin:0"><small>ยังไม่เคยทำแบบทดสอบก่อนอบรม? <a href="pretest.php">คลิกที่นี่เพื่อทำ Pretest</a></small></p>
     <?php endif; ?>
   </form>
 
@@ -280,17 +285,17 @@ page_header($test['title']);
   <?php endif; ?>
 
 <?php else: ?>
-  <!-- หน้าลงทะเบียนทำแบบทดสอบก่อนเรียน (Pretest) -->
+  <!-- หน้าลงทะเบียนทำแบบทดสอบก่อนอบรม (Pretest) -->
   <form method="post" class="card form">
     <?= csrf_field() ?>
     <input type="hidden" name="action" value="register">
     <label>ชื่อ-สกุล (ใช้แสดงบนเกียรติบัตร)
       <input name="full_name" required maxlength="200" autocomplete="name"
-             value="<?= h($_POST['full_name'] ?? ($me['full_name'] ?? '')) ?>" placeholder="เช่น สมชาย ใจดี">
+             value="<?= h($_POST['full_name'] ?? ($cookieAny['full_name'] ?? '')) ?>" placeholder="เช่น สมชาย ใจดี">
     </label>
     <label>หน่วยงาน
       <input name="agency" required maxlength="200"
-             value="<?= h($_POST['agency'] ?? ($me['agency'] ?? '')) ?>" placeholder="เช่น แผนก / ฝ่าย / สำนัก">
+             value="<?= h($_POST['agency'] ?? ($cookieAny['agency'] ?? '')) ?>" placeholder="เช่น แผนก / ฝ่าย / สำนัก">
     </label>
     <button class="btn primary" type="submit">เริ่มทำแบบทดสอบ</button>
   </form>

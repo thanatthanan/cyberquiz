@@ -9,6 +9,8 @@ $s = $pdo->prepare("SELECT * FROM tests WHERE id=?");
 $s->execute([$quiz['tid']]);
 $test = $s->fetch();
 if (!$test) redirect('index.php');
+$proj = project_by_id((int)$test['project_id']);
+if ($proj) $GLOBALS['CQ_PROJECT'] = $proj;
 $pool = questions((int)$test['id']);
 
 // สุ่มเลือกข้อสอบจากคลัง (ครั้งเดียวต่อการเข้าทำ — รีเฟรชหน้าแล้วได้ชุดเดิม)
@@ -29,8 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_check();
     if (!$test['is_open']) fatal('แบบทดสอบนี้ปิดรับคำตอบแล้ว');
     if ($test['code'] === 'post' && (cfg('require_pretest') ?? true)) {
-        $pre = test_by_code('pre');
-        if ($pre && !attempt_of($quiz['pid'], (int)$pre['id'])) fatal('ต้องทำแบบทดสอบก่อนเรียน (Pretest) ให้เสร็จก่อน');
+        $pre = test_by_code('pre', (int)$test['project_id']);
+        if ($pre && !attempt_of($quiz['pid'], (int)$pre['id'])) fatal('ต้องทำแบบทดสอบก่อนอบรม (Pretest) ให้เสร็จก่อน');
     }
     $done = attempt_of($quiz['pid'], (int)$test['id']);
     $isRetake = $done && can_retake_post($done + ['code' => $test['code']]);

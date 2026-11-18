@@ -3,20 +3,23 @@ require __DIR__ . '/inc/bootstrap.php';
 
 $id = (int)($_GET['id'] ?? 0);
 $pdo = db();
-$s = $pdo->prepare("SELECT a.*, t.code, t.title, t.show_answers, t.is_open, p.full_name, p.agency, p.ref_code, p.token
+$s = $pdo->prepare("SELECT a.*, t.code, t.title, t.show_answers, t.is_open, t.project_id, p.full_name, p.agency, p.ref_code, p.token
                     FROM attempts a JOIN tests t ON t.id=a.test_id JOIN participants p ON p.id=a.participant_id WHERE a.id=?");
 $s->execute([$id]);
 $a = $s->fetch();
 $mine = $a && (in_array($id, $_SESSION['my_attempts'] ?? [], true) || hash_equals($a['token'], (string)($_COOKIE['cq_token'] ?? '')) || is_admin());
 if (!$mine) redirect('index.php');
+$proj = project_by_id((int)$a['project_id']);
+if ($proj) $GLOBALS['CQ_PROJECT'] = $proj;
+$cs = cert_settings($proj);
 
 $pct = $a['total'] ? round($a['score'] / $a['total'] * 100) : 0;
-$canRetake = ($a['code'] === 'post') && !empty($a['is_open']) && can_retake_post($a);
-$maxAtt = post_max_attempts();
+$canRetake = ($a['code'] === 'post') && !empty($a['is_open']) && can_retake_post($a, $proj);
+$maxAtt = post_max_attempts($proj);
 $attNo = (int)($a['attempt_no'] ?? 1);
 $other = null;
 if ($a['code'] === 'post') {
-    $pre = test_by_code('pre');
+    $pre = test_by_code('pre', (int)$a['project_id']);
     if ($pre) $other = attempt_of((int)$a['participant_id'], (int)$pre['id']);
 }
 $msg = $pct >= 80 ? 'ยอดเยี่ยม! คุณมีความตระหนักรู้ด้านความปลอดภัยไซเบอร์ในระดับดีมาก'
@@ -34,18 +37,18 @@ page_header('ผลการทดสอบ');
   <p><b><?= $pct ?>%</b> — <?= h($msg) ?></p>
   <?php if ($other): $d = (int)$a['score'] - (int)$other['score']; ?>
     <div class="compare">
-      <div><small>ก่อนเรียน</small><b><?= (int)$other['score'] ?>/<?= (int)$other['total'] ?></b></div>
-      <div><small>หลังเรียน</small><b><?= (int)$a['score'] ?>/<?= (int)$a['total'] ?></b></div>
+      <div><small>ก่อนอบรม</small><b><?= (int)$other['score'] ?>/<?= (int)$other['total'] ?></b></div>
+      <div><small>หลังอบรม</small><b><?= (int)$a['score'] ?>/<?= (int)$a['total'] ?></b></div>
       <div class="<?= $d > 0 ? 'up' : ($d < 0 ? 'down' : '') ?>"><small>เปลี่ยนแปลง</small><b><?= $d > 0 ? '+' : '' ?><?= $d ?></b></div>
     </div>
   <?php endif; ?>
-  <?php if ($a['code'] === 'post' && setting('cert_enabled', '1') === '1'): ?>
-    <?php if (cert_passed($a)): ?>
-      <?php $needEval = eval_required() && !eval_done((int)$a['participant_id']); ?>
+  <?php if ($a['code'] === 'post' && $cs['cert_enabled'] === '1'): ?>
+    <?php if (cert_passed($a, $proj)): ?>
+      <?php $needEval = eval_required($proj) && !eval_done((int)$a['participant_id']); ?>
       <p><a class="btn primary" href="<?= $needEval ? 'eval.php' : 'cert.php' ?>?id=<?= (int)$a['id'] ?>">รับเกียรติบัตร (PDF)</a></p>
       <?php if ($needEval): ?><p class="muted">กรุณาทำแบบประเมินการอบรมสั้น ๆ ก่อนดาวน์โหลดเกียรติบัตร</p><?php endif; ?>
     <?php else: ?>
-      <p class="passnote">เกณฑ์รับเกียรติบัตร: ได้คะแนนหลังเรียนอย่างน้อย <?= h((string)setting('cert_pass_pct', '60')) ?>% (<?= cert_min_score((int)$a['total']) ?>/<?= (int)$a['total'] ?> คะแนน)</p>
+      <p class="passnote">เกณฑ์รับเกียรติบัตร: ได้คะแนนหลังอบรมอย่างน้อย <?= h($cs['cert_pass_pct']) ?>% (<?= cert_min_score((int)$a['total'], $proj) ?>/<?= (int)$a['total'] ?> คะแนน)</p>
       <?php if ($canRetake): ?>
         <div class="alert info" style="margin:14px auto;max-width:480px">
           <div style="margin-bottom:10px">
@@ -73,7 +76,7 @@ page_header('ผลการทดสอบ');
           <button type="button" class="btn" style="padding:8px 20px;font-size:15px" onclick="navigator.clipboard?.writeText('<?= h($a['ref_code']) ?>').then(()=>this.textContent='คัดลอกรหัสแล้ว ✓')">คัดลอกรหัส</button>
         </div>
       <?php endif; ?>
-      <div style="font-size:14px">เมื่อจบการบรรยาย ใช้เครื่องเดิมกดเริ่มทำหลังเรียนได้ทันที หรือหากย้ายเครื่องให้ใช้ <b>รหัส 6 หลัก</b> นี้หรือค้นหาจากชื่อ-สกุล</div>
+      <div style="font-size:14px">เมื่อจบการบรรยาย ใช้เครื่องเดิมกดเริ่มทำหลังอบรมได้ทันที หรือหากย้ายเครื่องให้ใช้ <b>รหัส 6 หลัก</b> นี้หรือค้นหาจากชื่อ-สกุล</div>
     </div>
   <?php endif; ?>
   <a class="btn" href="<?= $a['code'] === 'post' ? 'posttest.php' : 'pretest.php' ?>">กลับหน้าแบบทดสอบ</a>

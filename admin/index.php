@@ -2,6 +2,11 @@
 require __DIR__ . '/../inc/bootstrap.php';
 $PAGE_ROOT = '../';
 $pdo = db();
+if (is_admin()) {
+    $proj = admin_project();
+    $projId = (int)$proj['id'];
+    $GLOBALS['CQ_PROJECT'] = $proj;
+}
 
 /* ---------- actions ---------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -23,14 +28,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION = [];
             session_destroy();
             redirect('index.php');
+        case 'switch_project':
+            $p = project_by_id((int)($_POST['project_id'] ?? 0));
+            if ($p) {
+                $_SESSION['admin_project_id'] = (int)$p['id'];
+                $_SESSION['flash'] = 'สลับมาจัดการโครงการ: ' . $p['course_title'];
+            }
+            break;
+        case 'set_active_project':
+            set_setting('active_project_id', (string)$projId);
+            $_SESSION['flash'] = 'ตั้งโครงการนี้เป็นโครงการหลัก (หน้าแรก) แล้ว';
+            break;
+        case 'create_project':
+            $newTitle = trim((string)($_POST['course_title'] ?? ''));
+            $newOrg   = trim((string)($_POST['org_name'] ?? ''));
+            $rawSlug  = strtolower(trim((string)($_POST['slug'] ?? '')));
+            $slug     = preg_replace('/[^a-z0-9-]+/', '-', $rawSlug);
+            $slug     = trim((string)$slug, '-');
+            if ($slug === '') $slug = 'proj-' . date('Ymd-His');
+            $chkSlug = $pdo->prepare("SELECT 1 FROM projects WHERE slug=?");
+            $chkSlug->execute([$slug]);
+            if ($chkSlug->fetchColumn()) $slug .= '-' . substr(bin2hex(random_bytes(2)), 0, 4);
+
+            if ($newTitle === '') {
+                $_SESSION['flash'] = 'กรุณากรอกชื่อหัวข้อการอบรมของโครงการใหม่';
+                break;
+            }
+            $copyFrom = (int)($_POST['copy_from'] ?? 0);
+            $srcProj = $copyFrom > 0 ? project_by_id($copyFrom) : null;
+            $certJson = $srcProj && !empty($srcProj['cert_settings'])
+                ? (string)$srcProj['cert_settings']
+                : json_encode(cert_defaults() + ['eval_required' => '1'], JSON_UNESCAPED_UNICODE);
+
+            $pdo->beginTransaction();
+            $pdo->prepare("INSERT INTO projects (slug, course_title, org_name, is_active, post_max_attempts, cert_settings, created_at) VALUES (?,?,?,1,3,?,NOW())")
+                ->execute([$slug, mb_substr($newTitle, 0, 500), mb_substr($newOrg, 0, 500), $certJson]);
+            $newPid = (int)$pdo->lastInsertId();
+
+            $insT = $pdo->prepare("INSERT INTO tests (project_id, code, title, is_open, show_answers) VALUES (?,?,?,1,0)");
+            $insQ = $pdo->prepare("INSERT INTO questions (test_id, seq, topic, question, opt_a, opt_b, opt_c, opt_d, correct) VALUES (?,?,?,?,?,?,?,?,?)");
+            if ($srcProj) {
+                $srcTests = tests((int)$srcProj['id']);
+                foreach ($srcTests as $st) {
+                    $insT->execute([$newPid, $st['code'], $st['title']]);
+                    $newTid = (int)$pdo->lastInsertId();
+                    foreach (questions((int)$st['id']) as $q) {
+                        $insQ->execute([$newTid, $q['seq'], $q['topic'], $q['question'], $q['opt_a'], $q['opt_b'], $q['opt_c'], $q['opt_d'], $q['correct']]);
+                    }
+                }
+            } else {
+                $insT->execute([$newPid, 'pre', 'แบบทดสอบก่อนอบรม (Pre-test)']);
+                $insT->execute([$newPid, 'post', 'แบบทดสอบหลังอบรม (Post-test)']);
+            }
+            $pdo->commit();
+
+            $_SESSION['admin_project_id'] = $newPid;
+            if (!empty($_POST['make_active'])) {
+                set_setting('active_project_id', (string)$newPid);
+            }
+            $_SESSION['flash'] = 'สร้างโครงการใหม่ “' . $newTitle . '” เรียบร้อยแล้ว';
+            break;
         case 'toggle_open':
-            $pdo->prepare("UPDATE tests SET is_open=1-is_open WHERE id=?")->execute([$tid]);
+            $pdo->prepare("UPDATE tests SET is_open=1-is_open WHERE id=? AND project_id=?")->execute([$tid, $projId]);
             break;
         case 'toggle_answers':
-            $pdo->prepare("UPDATE tests SET show_answers=1-show_answers WHERE id=?")->execute([$tid]);
+            $pdo->prepare("UPDATE tests SET show_answers=1-show_answers WHERE id=? AND project_id=?")->execute([$tid, $projId]);
             break;
         case 'delete_participant':
-            $pdo->prepare("DELETE FROM participants WHERE id=?")->execute([(int)($_POST['pid'] ?? 0)]);
+            $pdo->prepare("DELETE FROM participants WHERE id=? AND project_id=?")->execute([(int)($_POST['pid'] ?? 0), $projId]);
             $_SESSION['flash'] = 'ลบผู้เข้าร่วมแล้ว';
             break;
         case 'save_course':
@@ -40,16 +105,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($cTitle === '') {
                 $_SESSION['flash'] = 'กรุณากรอกชื่อหัวข้อการอบรม';
             } else {
-                set_setting('course_title', mb_substr($cTitle, 0, 500));
-                set_setting('org_name', mb_substr($cOrg, 0, 500));
-                set_setting('post_max_attempts', (string)$maxAtt);
+                $pdo->prepare("UPDATE projects SET course_title=?, org_name=?, post_max_attempts=? WHERE id=?")
+                    ->execute([mb_substr($cTitle, 0, 500), mb_substr($cOrg, 0, 500), $maxAtt, $projId]);
+                if ($projId === (int)active_project()['id']) {
+                    set_setting('course_title', mb_substr($cTitle, 0, 500));
+                    set_setting('org_name', mb_substr($cOrg, 0, 500));
+                    set_setting('post_max_attempts', (string)$maxAtt);
+                }
                 $_SESSION['flash'] = 'บันทึกการตั้งค่าการอบรมแล้ว';
             }
             break;
         case 'reset':
             if (trim((string)($_POST['confirm'] ?? '')) === 'RESET') {
-                $pdo->exec("DELETE FROM participants");
-                $_SESSION['flash'] = 'ล้างผลการทดสอบทั้งหมดแล้ว (ข้อสอบยังอยู่ครบ)';
+                $pdo->prepare("DELETE FROM participants WHERE project_id=?")->execute([$projId]);
+                $_SESSION['flash'] = 'ล้างผลการทดสอบของโครงการนี้แล้ว (ข้อสอบและโครงการอื่นยังอยู่ครบ)';
             } else {
                 $_SESSION['flash'] = 'พิมพ์คำว่า RESET ให้ถูกต้องเพื่อยืนยันการล้างข้อมูล';
             }
@@ -74,7 +143,10 @@ if (!is_admin()) {
 }
 
 /* ---------- statistics ---------- */
-$tests = tests();
+$allProjects = projects_all();
+$activeProjId = (int)active_project()['id'];
+$isMainProj = ($projId === $activeProjId);
+$tests = tests($projId);
 $byCode = [];
 foreach ($tests as $t) $byCode[$t['code']] = $t;
 $preId = (int)($byCode['pre']['id'] ?? 0);
@@ -86,7 +158,9 @@ foreach ($tests as $t) {
     $s->execute([$t['id']]);
     $summary[$t['id']] = $s->fetch();
 }
-$nPeople = (int)$pdo->query("SELECT COUNT(*) FROM participants")->fetchColumn();
+$npStmt = $pdo->prepare("SELECT COUNT(*) FROM participants WHERE project_id=?");
+$npStmt->execute([$projId]);
+$nPeople = (int)$npStmt->fetchColumn();
 
 $paired = $pdo->prepare("SELECT COUNT(*) n, AVG(b.score) pre, AVG(c.score) post, AVG(c.score-b.score) diff,
     SUM(c.score>b.score) up, SUM(c.score=b.score) same, SUM(c.score<b.score) down
@@ -111,21 +185,25 @@ $people = $pdo->prepare("SELECT p.id, p.full_name, p.agency, p.ref_code, p.creat
     FROM participants p
     LEFT JOIN attempts b ON b.participant_id=p.id AND b.test_id=?
     LEFT JOIN attempts c ON c.participant_id=p.id AND c.test_id=?
+    WHERE p.project_id=?
     ORDER BY p.created_at DESC, p.id DESC");
-$people->execute([$preId, $postId]);
+$people->execute([$preId, $postId, $projId]);
 $people = $people->fetchAll();
 
 $agencies = $pdo->prepare("SELECT p.agency, COUNT(DISTINCT p.id) n, AVG(b.score) pre, AVG(c.score) post
     FROM participants p
     LEFT JOIN attempts b ON b.participant_id=p.id AND b.test_id=?
     LEFT JOIN attempts c ON c.participant_id=p.id AND c.test_id=?
+    WHERE p.project_id=?
     GROUP BY p.agency ORDER BY n DESC, p.agency");
-$agencies->execute([$preId, $postId]);
+$agencies->execute([$preId, $postId, $projId]);
 $agencies = $agencies->fetchAll();
 
 /* ผลแบบประเมินการอบรม */
 $EV = eval_items();
-$evRows = $pdo->query("SELECT * FROM evaluations ORDER BY created_at DESC")->fetchAll();
+$evStmt = $pdo->prepare("SELECT e.* FROM evaluations e JOIN participants p ON p.id=e.participant_id WHERE p.project_id=? ORDER BY e.created_at DESC");
+$evStmt->execute([$projId]);
+$evRows = $evStmt->fetchAll();
 $evN = count($evRows);
 $evSum = []; $evCnt = []; $evPos = []; $evPrior = ['1' => 0, '0' => 0]; $evText = [];
 foreach ($EV['comments'] as $k => $label) $evText[$k] = [];
@@ -158,7 +236,7 @@ $evLow = $evItems ? array_reduce($evItems, fn($c, $x) => ($c === null || $x['m']
 $passN = 0;
 $ps = $pdo->prepare("SELECT score, total FROM attempts WHERE test_id=?");
 $ps->execute([$postId]);
-foreach ($ps as $r) if (cert_passed($r + ['code' => 'post'])) $passN++;
+foreach ($ps as $r) if (cert_passed($r + ['code' => 'post'], $proj)) $passN++;
 $evOverall = $evAllN ? $evAll / $evAllN : null;
 $evSat = !empty($evItems['all']) ? $evItems['all']['m'] : null;
 $kb = $evKnow['before'] ?? ''; $ka = $evKnow['after'] ?? '';
@@ -192,6 +270,63 @@ if ($live) echo '<meta http-equiv="refresh" content="15">';
 </div>
 <?php if ($flash): ?><div class="alert info"><?= h($flash) ?></div><?php endif; ?>
 
+<div class="card" style="padding:14px 18px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+    <form method="post" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;flex:1 1 320px">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="switch_project">
+      <label style="margin:0;font-weight:700;color:var(--navy)">โครงการ:</label>
+      <select name="project_id" onchange="this.form.submit()" style="width:auto;max-width:420px;margin:0">
+        <?php foreach ($allProjects as $ap): ?>
+          <option value="<?= (int)$ap['id'] ?>" <?= (int)$ap['id'] === $projId ? 'selected' : '' ?>>
+            <?= h($ap['course_title']) ?><?= (int)$ap['id'] === $activeProjId ? ' ★ (หลัก)' : '' ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <?php if ($isMainProj): ?>
+        <span class="badge post" style="margin:0">โครงการหลัก (หน้าแรก)</span>
+      <?php endif; ?>
+    </form>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <?php if (!$isMainProj): ?>
+        <form method="post" style="margin:0">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="set_active_project">
+          <button class="btn ok" type="submit">★ ตั้งเป็นโครงการหลัก (หน้าแรก)</button>
+        </form>
+      <?php endif; ?>
+    </div>
+  </div>
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;font-weight:700;color:var(--navy2)">+ สร้างโครงการใหม่ (เก็บข้อมูลและใบประกาศโครงการเดิมไว้)</summary>
+    <form method="post" class="form" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="create_project">
+      <label>ชื่อโครงการ / หลักสูตรใหม่
+        <input name="course_title" required maxlength="500" placeholder="เช่น การอบรมเชิงปฏิบัติการ Cyber Security รุ่นที่ 2/2569">
+      </label>
+      <div class="grid two">
+        <label>ชื่อหน่วยงาน / ผู้จัด
+          <input name="org_name" maxlength="500" value="<?= h($proj['org_name']) ?>">
+        </label>
+        <label>รหัสลิงก์โครงการ (Slug ภาษาอังกฤษ/ตัวเลข ไม่บังคับ)
+          <input name="slug" maxlength="64" placeholder="เช่น batch2-2569 (เว้นว่างเพื่อสร้างอัตโนมัติ)">
+        </label>
+      </div>
+      <label>คัดลอกคลังข้อสอบและรูปแบบเกียรติบัตรจาก
+        <select name="copy_from">
+          <?php foreach ($allProjects as $ap): ?>
+            <option value="<?= (int)$ap['id'] ?>" <?= (int)$ap['id'] === $projId ? 'selected' : '' ?>>คัดลอกจาก: <?= h($ap['course_title']) ?></option>
+          <?php endforeach; ?>
+          <option value="0">สร้างใหม่ว่างเปล่า (เพิ่มข้อสอบเองภายหลัง)</option>
+        </select>
+      </label>
+      <label class="tiny"><input type="checkbox" name="make_active" value="1" checked> ตั้งเป็นโครงการหลัก (หน้าแรก) ทันทีหลังสร้าง</label>
+      <button class="btn primary" type="submit">สร้างโครงการใหม่</button>
+    </form>
+  </details>
+</div>
+
 <?php
 $tabs = ['overview' => 'ภาพรวม', 'questions' => 'ร้อยละที่ตอบถูกรายข้อ', 'eval' => 'ผลแบบประเมินการอบรม', 'agency' => 'สรุปตามหน่วยงาน', 'people' => 'ผู้เข้าร่วม'];
 $badge = ['eval' => $evN, 'agency' => count($agencies), 'people' => count($people)];
@@ -203,14 +338,15 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   <?php endforeach; ?>
 </nav>
 <section class="tabpane" data-pane="overview" <?= $tab === 'overview' ? '' : 'hidden' ?>>
+<?php $pParam = (!$isMainProj && !empty($proj['slug'])) ? ('p=' . rawurlencode($proj['slug']) . '&') : ''; ?>
 <div class="card linkbox" style="display:block">
   <small class="muted">ลิงก์สำหรับผู้เข้าร่วม (เครื่องที่ต่อเครือข่ายเดียวกัน) · ถ้าเครื่องอื่นเปิดไม่ได้ ให้อนุญาต Apache ใน Windows Firewall</small>
   <div class="linkrow">
     <div><span class="badge pre">ก่อนอบรม</span> <?= !empty($byCode['pre']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
-      <div class="url"><?= h($lanUrl . 'pretest.php?openExternalBrowser=1') ?></div>
+      <div class="url"><?= h($lanUrl . 'pretest.php?' . $pParam . 'openExternalBrowser=1') ?></div>
       <small class="muted">ใช้ลิงก์นี้สร้าง QR Code (สแกนผ่าน LINE จะเปิด Chrome/Safari ให้อัตโนมัติ)</small></div>
     <div><span class="badge post">หลังอบรม</span> <?= !empty($byCode['post']['is_open']) ? '<small class="up">● เปิดอยู่</small>' : '<small class="muted">○ ปิดอยู่</small>' ?>
-      <div class="url"><?= h($lanUrl . 'posttest.php?openExternalBrowser=1') ?></div>
+      <div class="url"><?= h($lanUrl . 'posttest.php?' . $pParam . 'openExternalBrowser=1') ?></div>
       <small class="muted"><?= (cfg('require_pretest') ?? true) ? 'เครื่องเดิมกดเริ่มสอบได้เลย / ย้ายเครื่องค้นหาด้วยชื่อหรือรหัส 6 หลัก' : 'ไม่บังคับทำ Pretest ก่อน (ตั้งค่าใน config.php)' ?></small></div>
   </div>
 </div>
@@ -303,12 +439,12 @@ $tab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'overview';
   <button class="btn primary">บันทึกการตั้งค่า</button>
 </form>
 
-<h2 class="section">ล้างข้อมูลเพื่อเริ่มรุ่นใหม่</h2>
+<h2 class="section">ล้างข้อมูลของโครงการนี้</h2>
 <form method="post" class="card form danger">
   <?= csrf_field() ?><input type="hidden" name="action" value="reset">
-  <p>ลบผู้เข้าร่วมและผลการทดสอบทั้งหมด (ข้อสอบไม่ถูกลบ) — ควรดาวน์โหลด CSV เก็บไว้ก่อน</p>
+  <p>ลบผู้เข้าร่วมและผลการทดสอบ<b>เฉพาะโครงการนี้</b> (ข้อสอบและโครงการอื่นไม่ถูกลบ) — ควรดาวน์โหลด CSV เก็บไว้ก่อน</p>
   <label>พิมพ์คำว่า <b>RESET</b> เพื่อยืนยัน<input name="confirm" autocomplete="off"></label>
-  <button class="btn danger">ล้างผลการทดสอบทั้งหมด</button>
+  <button class="btn danger">ล้างผลการทดสอบของโครงการนี้</button>
 </form>
 </section>
 

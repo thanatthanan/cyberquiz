@@ -17,6 +17,7 @@ main.wrap{padding-top:20px;padding-bottom:24px}
 .top{background:#fff;color:var(--navy);border-bottom:4px solid var(--navy);box-shadow:0 4px 0 var(--red)}
 .top .wrap{padding-top:12px;padding-bottom:12px}
 .brand{display:flex;align-items:center;gap:12px}
+.brand .logo-link{display:flex;align-items:center;flex:none;text-decoration:none}
 .brand .logo{height:52px;width:auto;flex:none}
 .brand > span{border-left:1px solid var(--line);padding-left:12px;min-width:0;flex:1}
 .brand b{display:block;font-size:18px}
